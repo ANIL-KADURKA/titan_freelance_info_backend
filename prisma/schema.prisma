@@ -260,12 +260,32 @@ model FileObject {
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz()
   deletedAt      DateTime?      @map("deleted_at") @db.Timestamptz()
 
-  uploadedBy User? @relation("UploadedByUser", fields: [uploadedById], references: [id])
+  uploadedBy  User?         @relation("UploadedByUser", fields: [uploadedById], references: [id])
+  testimonials Testimonial[] @relation("TestimonialPhoto")
 
   @@unique([bucket, objectKey])
   @@index([uploadedById])
   @@index([scanStatus])
   @@map("file_objects")
+}
+
+model Testimonial {
+  id          String        @id @default(uuid()) @db.Uuid
+  authorName  String        @map("author_name")
+  authorRole  String?       @map("author_role")
+  quote       String
+  joinedAt    DateTime?     @map("joined_at") @db.Date
+  photoId     String?       @map("photo_id") @db.Uuid
+  status      PublishStatus @default(DRAFT)
+  sortOrder   Int           @default(0) @map("sort_order")
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt   DateTime?     @map("deleted_at") @db.Timestamptz()
+
+  photo FileObject? @relation("TestimonialPhoto", fields: [photoId], references: [id])
+
+  @@index([status, sortOrder])
+  @@map("testimonials")
 }
 
 model UserAddress {
