@@ -1,0 +1,3 @@
+echo "Running pre-commit checks..."
+echo "pnpm checl" 
+pnpm check
