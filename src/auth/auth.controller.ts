@@ -25,6 +25,7 @@ import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
 import { UpdateCredentialsDto } from './dto/update-credentials.dto.js';
 import { TestEmailDto } from './dto/test-email.dto.js';
+import { SeedDefaultUsersDto } from './dto/seed-default-users.dto.js';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -88,6 +89,15 @@ export class AuthController {
     @Body() dto: UpdateCredentialsDto,
   ) {
     return this.authService.updateProfessionalCredentials(user.id, dto);
+  }
+
+  @Post('seed-default-users')
+  @ApiOperation({
+    summary: 'Create the default admin and recruiter users if absent',
+  })
+  @ApiResponse({ status: 200, description: 'Seed users ensured successfully' })
+  async seedDefaultUsers(@Body() dto: SeedDefaultUsersDto) {
+    return this.authService.seedDefaultUsers(dto);
   }
 
   @Post('test-email')
