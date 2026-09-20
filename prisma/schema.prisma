@@ -66,6 +66,46 @@ enum OtpPurpose {
   PASSWORD_RESET
 }
 
+enum PublishStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model FaqCategory {
+  id          String        @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  sortOrder   Int           @default(0) @map("sort_order")
+  status      PublishStatus @default(DRAFT)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt   DateTime?     @map("deleted_at") @db.Timestamptz()
+
+  faqs Faq[]
+
+  @@index([status, sortOrder])
+  @@map("faq_categories")
+}
+
+model Faq {
+  id            String        @id @default(uuid()) @db.Uuid
+  question      String
+  answer        String
+  category      String?
+  faqCategoryId String?       @map("faq_category_id") @db.Uuid
+  sortOrder     Int           @default(0) @map("sort_order")
+  status        PublishStatus @default(DRAFT)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt     DateTime?     @map("deleted_at") @db.Timestamptz()
+
+  faqCategory FaqCategory? @relation(fields: [faqCategoryId], references: [id])
+
+  @@index([status, sortOrder])
+  @@map("faqs")
+}
+
 model User {
   id                      String          @id @default(uuid()) @db.Uuid
   email                   String          @unique @db.VarChar(320)

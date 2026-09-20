@@ -17,6 +17,7 @@ import { VerifyOtpDto } from './dto/verify-otp.dto.js';
 import { ResetPasswordDto } from './dto/reset-password.dto.js';
 import { UpdateCredentialsDto } from './dto/update-credentials.dto.js';
 import { TestEmailDto } from './dto/test-email.dto.js';
+import { SeedDefaultUsersDto } from './dto/seed-default-users.dto.js';
 import { UserRole } from './roles.enum.js';
 
 export type AuthTokens = {
@@ -76,7 +77,6 @@ export class AuthService {
       },
     });
 
-    await this.seedRoles();
     const defaultRole = await this.prisma.role.findUnique({
       where: { name: UserRole.CANDIDATE },
     });
@@ -386,6 +386,110 @@ export class AuthService {
     return {
       message: 'Test email sent successfully',
       to: email,
+    };
+  }
+
+  async seedDefaultUsers(dto: SeedDefaultUsersDto = {}) {
+    await this.seedRoles();
+
+    const adminEmail =
+      dto.adminEmail?.trim().toLowerCase() ?? 'admin@titan.local';
+    const adminPassword = dto.adminPassword ?? 'Admin@123';
+    const recruiterEmail =
+      dto.recruiterEmail?.trim().toLowerCase() ?? 'recruiter@titan.local';
+    const recruiterPassword = dto.recruiterPassword ?? 'Recruiter@123';
+
+    const adminRole = await this.prisma.role.findUnique({
+      where: { name: UserRole.ADMIN },
+    });
+    const recruiterRole = await this.prisma.role.findUnique({
+      where: { name: UserRole.RECRUITER },
+    });
+
+    if (!adminRole || !recruiterRole) {
+      throw new BadRequestException('Required roles are not available yet');
+    }
+
+    const defaultUsers = [
+      { email: adminEmail, password: adminPassword, roleId: adminRole.id },
+      {
+        email: recruiterEmail,
+        password: recruiterPassword,
+        roleId: recruiterRole.id,
+      },
+    ];
+
+    const createdUsers = [] as Array<{
+      email: string;
+      role: string;
+      created: boolean;
+    }>;
+
+    for (const target of defaultUsers) {
+      const existing = await this.prisma.user.findFirst({
+        where: {
+          OR: [{ email: target.email }, { personalEmail: target.email }],
+        },
+      });
+
+      if (existing && !dto.force) {
+        createdUsers.push({
+          email: target.email,
+          role:
+            target.roleId === adminRole.id
+              ? UserRole.ADMIN
+              : UserRole.RECRUITER,
+          created: false,
+        });
+        continue;
+      }
+
+      const user = await this.prisma.user.upsert({
+        where: { email: target.email },
+        update: {
+          passwordHash: await bcrypt.hash(target.password, 12),
+          status: 'ACTIVE',
+          personalEmail: target.email,
+          firstName: target.roleId === adminRole.id ? 'System' : 'Recruitment',
+          lastName: target.roleId === adminRole.id ? 'Admin' : 'Team',
+        },
+        create: {
+          email: target.email,
+          personalEmail: target.email,
+          phone:
+            target.roleId === adminRole.id ? '+10000000001' : '+10000000002',
+          passwordHash: await bcrypt.hash(target.password, 12),
+          firstName: target.roleId === adminRole.id ? 'System' : 'Recruitment',
+          lastName: target.roleId === adminRole.id ? 'Admin' : 'Team',
+          status: 'ACTIVE',
+        },
+      });
+
+      await this.prisma.userRole.upsert({
+        where: {
+          userId_roleId: {
+            userId: user.id,
+            roleId: target.roleId,
+          },
+        },
+        update: {},
+        create: {
+          userId: user.id,
+          roleId: target.roleId,
+        },
+      });
+
+      createdUsers.push({
+        email: target.email,
+        role:
+          target.roleId === adminRole.id ? UserRole.ADMIN : UserRole.RECRUITER,
+        created: true,
+      });
+    }
+
+    return {
+      message: 'Default seeded users ensured successfully',
+      users: createdUsers,
     };
   }
 
