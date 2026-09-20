@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateAddressDto, UpdateAddressDto } from './dto/address.dto.js';
 import { CreateEducationDto, UpdateEducationDto } from './dto/education.dto.js';
@@ -13,9 +13,12 @@ import {
 
 @Injectable()
 export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async getProfile(userId: string) {
+    this.logger.log(`Fetching profile for userId=${userId}`);
     const [user, addresses, educations, socialLinks, professionalInfo] =
       await Promise.all([
         this.prisma.user.findUnique({
@@ -53,8 +56,15 @@ export class UserService {
       ]);
 
     if (!user) {
+      this.logger.warn(
+        `Profile fetch failed: user not found for userId=${userId}`,
+      );
       throw new NotFoundException('User not found');
     }
+
+    this.logger.log(
+      `Profile fetched for userId=${userId} | addresses=${addresses.length} | educations=${educations.length} | socialLinks=${socialLinks.length}`,
+    );
 
     return {
       user,
@@ -69,23 +79,32 @@ export class UserService {
     userId: string,
     dto: CreateAddressDto | UpdateAddressDto,
   ) {
+    this.logger.log(`Create/update address request for userId=${userId}`);
     const existing = await this.prisma.userAddress.findFirst({
       where: { userId, addressType: dto.addressType ?? 'CURRENT' },
     });
 
     if (existing && 'id' in dto && dto.id) {
       const { id: _id, ...rest } = dto;
-      return this.prisma.userAddress.update({
+      this.logger.log(
+        `Updating existing address id=${dto.id} for userId=${userId}`,
+      );
+      const result = await this.prisma.userAddress.update({
         where: { id: dto.id },
         data: {
           ...rest,
           addressType: rest.addressType ?? 'CURRENT',
         },
       });
+      this.logger.log(`Address updated successfully id=${result.id}`);
+      return result;
     }
 
     if (existing && !('id' in dto)) {
-      return this.prisma.userAddress.update({
+      this.logger.log(
+        `Updating existing address type=${dto.addressType ?? 'CURRENT'} for userId=${userId}`,
+      );
+      const result = await this.prisma.userAddress.update({
         where: { id: existing.id },
         data: {
           addressType: dto.addressType ?? 'CURRENT',
@@ -97,9 +116,11 @@ export class UserService {
           isPrimary: dto.isPrimary,
         },
       });
+      this.logger.log(`Address updated successfully id=${result.id}`);
+      return result;
     }
 
-    return this.prisma.userAddress.create({
+    const result = await this.prisma.userAddress.create({
       data: {
         userId,
         addressType: dto.addressType ?? 'CURRENT',
@@ -111,6 +132,11 @@ export class UserService {
         isPrimary: dto.isPrimary ?? false,
       },
     });
+
+    this.logger.log(
+      `Address created successfully id=${result.id} for userId=${userId}`,
+    );
+    return result;
   }
 
   async listAddresses(userId: string) {
@@ -158,9 +184,19 @@ export class UserService {
       where: { id: educationId, userId },
     });
     if (!record) throw new NotFoundException('Education record not found');
+
+    const data = {
+      institution: dto.institution,
+      degree: dto.degree,
+      fieldOfStudy: dto.fieldOfStudy,
+      startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+      endDate: dto.endDate ? new Date(dto.endDate) : undefined,
+      grade: dto.grade,
+    };
+
     return this.prisma.userEducation.update({
       where: { id: educationId },
-      data: dto,
+      data,
     });
   }
 
