@@ -1,0 +1,295 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  INACTIVE
+  NOT_ELIGIBLE
+}
+
+enum AuthTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+enum GenderEnum {
+  MALE
+  FEMALE
+  OTHERS
+  NOT_DISCLOSED
+}
+
+enum AddressType {
+  CURRENT
+  PERMANENT
+  OTHER
+}
+
+enum ConsentType {
+  MARKETING_EMAILS
+  TERMS_AND_CONDITIONS
+  PRIVACY_POLICY
+}
+
+enum SocialMediaType {
+  LINKEDIN
+  GITHUB
+  TWITTER
+  INSTAGRAM
+  FACEBOOK
+  PORTFOLIO
+  OTHER
+}
+
+enum FileVisibility {
+  PRIVATE
+  PUBLIC
+}
+
+enum FileScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  FAILED
+}
+
+enum OtpPurpose {
+  LOGIN
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+model User {
+  id                      String          @id @default(uuid()) @db.Uuid
+  email                   String          @unique @db.VarChar(320)
+  personalEmail           String          @unique @map("personal_email") @db.VarChar(320)
+  phone                   String?         @db.VarChar(20)
+  firstName               String?         @map("first_name")
+  lastName                String?         @map("last_name")
+  gender                  GenderEnum?
+  whatsappNumber          String?         @map("whatsapp_number") @db.VarChar(20)
+  dateOfBirth             DateTime?       @map("date_of_birth") @db.Date
+  profileImageId          String?         @map("profile_image_id") @db.Uuid
+  passwordHash            String          @map("password_hash")
+  status                  AccountStatus   @default(PENDING_VERIFICATION)
+  statusReason            String?         @map("status_reason")
+  emailVerifiedAt         DateTime?       @map("email_verified_at") @db.Timestamptz()
+  failedLoginCount        Int             @default(0) @map("failed_login_count")
+  lockedUntil             DateTime?       @map("locked_until") @db.Timestamptz()
+  lastLoginAt             DateTime?       @map("last_login_at") @db.Timestamptz()
+  lastLoginIp             String?         @map("last_login_ip")
+  announcementEmailOptOut Boolean         @default(false) @map("announcement_email_opt_out")
+  createdAt               DateTime        @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt               DateTime        @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt               DateTime?       @map("deleted_at") @db.Timestamptz()
+  additionalDetails       Json?           @map("additional_details")
+
+  addresses        UserAddress[]
+  educations       UserEducation[]
+  socialLinks      UserSocialMediaLink[]
+  professionalInfo UserProfessionalInfo?
+  roles            UserRole[]
+  sessions         Session[]
+  authOtps         AuthOtp[]
+  consentRecords   ConsentRecord[]
+  uploadedFiles    FileObject[] @relation("UploadedByUser")
+
+  @@index([status])
+  @@map("users")
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String           @unique
+  description String?
+  isSystem    Boolean          @default(false) @map("is_system")
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz()
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique @db.VarChar(100)
+  module      String           @db.VarChar(60)
+  description String?
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId     String   @map("user_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id])
+  role Role @relation(fields: [roleId], references: [id])
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model Session {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  userAgent        String?   @map("user_agent")
+  ipAddress        String?   @map("ip_address")
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz()
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz()
+  lastUsedAt       DateTime  @default(now()) @map("last_used_at") @db.Timestamptz()
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model AuthOtp {
+  id           String     @id @default(uuid()) @db.Uuid
+  userId       String     @map("user_id") @db.Uuid
+  purpose      OtpPurpose
+  otpHash      String     @map("otp_hash") @db.VarChar(255)
+  expiresAt    DateTime   @map("expires_at") @db.Timestamptz()
+  attempts     Int        @default(0)
+  maxAttempts  Int        @default(5) @map("max_attempts")
+  verifiedAt   DateTime?  @map("verified_at") @db.Timestamptz()
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, purpose, createdAt])
+  @@index([expiresAt])
+  @@map("auth_otps")
+}
+
+model ConsentRecord {
+  id          String       @id @default(uuid()) @db.Uuid
+  userId      String       @map("user_id") @db.Uuid
+  type        ConsentType
+  version     String       @db.VarChar(30)
+  grantedAt   DateTime     @default(now()) @map("granted_at") @db.Timestamptz()
+  withdrawnAt DateTime?    @map("withdrawn_at") @db.Timestamptz()
+  ipAddress   String?      @map("ip_address")
+  userAgent   String?      @map("user_agent")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, type])
+  @@map("consent_records")
+}
+
+model FileObject {
+  id             String         @id @default(uuid()) @db.Uuid
+  bucket         String         @db.VarChar(100)
+  objectKey      String         @map("object_key")
+  originalName   String         @map("original_name")
+  mimeType       String         @map("mime_type") @db.VarChar(150)
+  sizeBytes      BigInt         @map("size_bytes")
+  checksumSha256 String?        @map("checksum_sha256") @db.VarChar(64)
+  visibility     FileVisibility @default(PRIVATE)
+  scanStatus     FileScanStatus @default(PENDING) @map("scan_status")
+  scannedAt      DateTime?      @map("scanned_at") @db.Timestamptz()
+  uploadedById   String?        @map("uploaded_by_id") @db.Uuid
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  deletedAt      DateTime?      @map("deleted_at") @db.Timestamptz()
+
+  uploadedBy User? @relation("UploadedByUser", fields: [uploadedById], references: [id])
+
+  @@unique([bucket, objectKey])
+  @@index([uploadedById])
+  @@index([scanStatus])
+  @@map("file_objects")
+}
+
+model UserAddress {
+  id          String      @id @default(uuid()) @db.Uuid
+  userId      String      @map("user_id") @db.Uuid
+  addressType AddressType @default(CURRENT) @map("address_type")
+  addressLine String?     @map("address_line")
+  city        String?
+  state       String?
+  country     String      @default("India")
+  postalCode  String?     @map("postal_code") @db.VarChar(12)
+  isPrimary   Boolean     @default(false) @map("is_primary")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, addressType])
+  @@map("user_addresses")
+}
+
+model UserEducation {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  institution  String
+  degree       String?
+  fieldOfStudy String?   @map("field_of_study")
+  startDate    DateTime? @map("start_date") @db.Date
+  endDate      DateTime? @map("end_date") @db.Date
+  grade        String?
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("user_educations")
+}
+
+model UserSocialMediaLink {
+  id              String          @id @default(uuid()) @db.Uuid
+  userId          String          @map("user_id") @db.Uuid
+  socialMediaType SocialMediaType @map("social_media_type")
+  url             String
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("user_social_media_links")
+}
+
+model UserProfessionalInfo {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @unique @map("user_id") @db.Uuid
+  languages         String[]
+  hardSkills        String[] @map("hard_skills")
+  softSkills        String[] @map("soft_skills")
+  currentOccupation String?  @map("current_occupation")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("user_professional_info")
+}
