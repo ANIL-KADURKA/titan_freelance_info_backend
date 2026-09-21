@@ -39,6 +39,12 @@ export class AuthService {
     const personalEmail = dto.personalEmail.trim().toLowerCase();
     const email = (dto.email ?? personalEmail).trim().toLowerCase();
     const phone = dto.phone.trim();
+    const firstName = dto.firstName?.trim();
+    const lastName = dto.lastName?.trim();
+
+    if (firstName?.includes('@')) {
+      throw new BadRequestException('First name cannot be an email address');
+    }
 
     this.logger.log(`Register attempt for email: ${email}`);
 
@@ -61,8 +67,9 @@ export class AuthService {
         email,
         personalEmail,
         passwordHash,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
+        firstName,
+        lastName,
+        gender: dto.gender,
         phone: dto.phone,
         status: 'PENDING_VERIFICATION',
       },
