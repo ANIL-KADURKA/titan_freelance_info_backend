@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SMTP Test Email</title>
+  </head>
+  <body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: Arial, sans-serif;">
+    <div style="max-width: 600px; margin: 32px auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb;">
+      <div style="background: #0f172a; padding: 24px; color: #ffffff;">
+        <h2 style="margin: 0; font-size: 24px;">{{companyName}}</h2>
+      </div>
+      <div style="padding: 32px 24px; color: #1f2937; line-height: 1.7;">
+        <p style="margin: 0 0 16px;">Hello {{recipientEmail}},</p>
+        <p style="margin: 0 0 16px;">{{message}}</p>
+        <p style="margin: 0;">This confirms your SMTP setup is working correctly.</p>
+      </div>
+      <div style="padding: 0 24px 24px; color: #6b7280; font-size: 12px;">
+        <p style="margin: 0;">Thanks,<br />{{companyName}} Team</p>
+      </div>
+    </div>
+  </body>
+</html>
