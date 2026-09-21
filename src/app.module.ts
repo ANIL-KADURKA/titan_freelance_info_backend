@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { CommonModule } from './common/common.module.js';
 import { LoggingInterceptor } from './common/logging.interceptor.js';
 import { FaqModule } from './faq/faq.module.js';
+import { JobsModule } from './jobs/jobs.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { TestimonialsModule } from './testimonials/testimonials.module.js';
 import { UserModule } from './user/user.module.js';
@@ -22,6 +23,7 @@ import { UserModule } from './user/user.module.js';
     AuthModule,
     UserModule,
     FaqModule,
+    JobsModule,
     TestimonialsModule,
   ],
   controllers: [AppController],
