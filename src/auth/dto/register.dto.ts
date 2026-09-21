@@ -1,11 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
+  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
   MinLength,
 } from 'class-validator';
+import { GenderEnum } from '@prisma/client';
 
 export class RegisterDto {
   @ApiPropertyOptional({
@@ -49,4 +51,13 @@ export class RegisterDto {
   @IsString()
   @IsNotEmpty()
   phone: string;
+
+  @ApiPropertyOptional({
+    enum: GenderEnum,
+    example: GenderEnum.NOT_DISCLOSED,
+    description: 'User gender',
+  })
+  @IsOptional()
+  @IsEnum(GenderEnum)
+  gender?: GenderEnum;
 }
