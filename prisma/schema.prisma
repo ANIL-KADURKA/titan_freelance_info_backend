@@ -72,6 +72,53 @@ enum PublishStatus {
   ARCHIVED
 }
 
+enum WorkMode {
+  REMOTE
+  HYBRID
+  ONSITE
+}
+
+enum JobStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  CLOSED
+}
+
+enum ApplicationFieldType {
+  TEXT
+  SHORT_TEXT
+  NUMBER
+  EMAIL
+  URL
+  SELECT
+  MULTI_SELECT
+  DATE
+  FILE
+  CHECKBOX
+}
+
+enum EligibilityFieldType {
+  TEXT
+  NUMBER
+  DATE
+  SELECT
+  BOOLEAN
+}
+
+enum EligibilityOperator {
+  EQ
+  NE
+  GT
+  LT
+  GTE
+  LTE
+  IN
+  NOT_IN
+  EXISTS
+  CONTAINS
+}
+
 model FaqCategory {
   id          String        @id @default(uuid()) @db.Uuid
   name        String
@@ -140,9 +187,107 @@ model User {
   authOtps         AuthOtp[]
   consentRecords   ConsentRecord[]
   uploadedFiles    FileObject[] @relation("UploadedByUser")
+  createdJobs      Job[]        @relation("CreatedJobs")
 
   @@index([status])
   @@map("users")
+}
+
+model JobCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String   @unique @db.VarChar(200)
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  jobs Job[]
+
+  @@index([isActive, sortOrder])
+  @@map("job_categories")
+}
+
+model Job {
+  id                     String               @id @default(uuid()) @db.Uuid
+  slug                   String               @unique @db.VarChar(200)
+  title                  String
+  categoryId             String               @map("category_id") @db.Uuid
+  createdById            String               @map("created_by_id") @db.Uuid
+  summary                String?
+  description            String
+  skills                 String[]             @default([])
+  requirements           String[]             @default([])
+  location               String?
+  workMode               WorkMode             @default(REMOTE) @map("work_mode")
+  duration               String?
+  openings               Int?
+  applicationInstructions String[]            @default([]) @map("application_instructions")
+  workInstructions       String[]             @default([]) @map("work_instructions")
+  additionalInfo         Json?                @map("additional_info")
+  coverImageId           String?              @map("cover_image_id") @db.Uuid
+  status                 JobStatus            @default(DRAFT)
+  publishedAt            DateTime?            @map("published_at") @db.Timestamptz()
+  applicationDeadline    DateTime?            @map("application_deadline") @db.Timestamptz()
+  closedAt               DateTime?            @map("closed_at") @db.Timestamptz()
+  createdAt              DateTime             @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt              DateTime             @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt              DateTime?            @map("deleted_at") @db.Timestamptz()
+
+  category          JobCategory          @relation(fields: [categoryId], references: [id])
+  createdBy         User                 @relation("CreatedJobs", fields: [createdById], references: [id])
+  applicationFields JobApplicationField[]
+  eligibilityRules  JobEligibilityRule[]
+
+  @@index([status, publishedAt])
+  @@index([categoryId])
+  @@index([createdById])
+  @@index([applicationDeadline])
+  @@index([deletedAt])
+  @@map("jobs")
+}
+
+model JobApplicationField {
+  id            String                @id @default(uuid()) @db.Uuid
+  jobId         String                @map("job_id") @db.Uuid
+  fieldKey      String                @map("field_key") @db.VarChar(100)
+  fieldType     ApplicationFieldType  @map("field_type")
+  label         String                @db.VarChar(200)
+  description   String?
+  required      Boolean               @default(false)
+  displayOrder  Int                   @default(0) @map("display_order")
+  options       Json?
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt     DateTime?             @map("deleted_at") @db.Timestamptz()
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, fieldKey])
+  @@index([jobId])
+  @@index([jobId, displayOrder])
+  @@map("job_application_fields")
+}
+
+model JobEligibilityRule {
+  id           String               @id @default(uuid()) @db.Uuid
+  jobId        String               @map("job_id") @db.Uuid
+  fieldKey     String               @map("field_key") @db.VarChar(100)
+  fieldType    EligibilityFieldType @map("field_type")
+  operator     EligibilityOperator
+  value        Json
+  displayOrder Int                  @default(0) @map("display_order")
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt    DateTime?            @map("deleted_at") @db.Timestamptz()
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([jobId, displayOrder])
+  @@index([jobId, fieldKey])
+  @@map("job_eligibility_rules")
 }
 
 model Role {
