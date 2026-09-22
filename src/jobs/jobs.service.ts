@@ -524,6 +524,10 @@ export class JobsService {
     });
   }
 
+  async updateJobStatus(id: string, status: JobStatus) {
+    return this.updateJob(id, { status });
+  }
+
   async softDeleteJob(id: string) {
     const existing = await this.prisma.job.findFirst({
       where: { id },

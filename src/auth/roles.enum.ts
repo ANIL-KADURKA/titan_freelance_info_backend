@@ -1,8 +1,8 @@
 export enum UserRole {
-  ADMIN = 'admin',
-  RECRUITER = 'recruiter',
-  EMPLOYEE = 'employee',
-  CANDIDATE = 'candidate',
+  ADMIN = 'ADMIN',
+  RECRUITER = 'RECRUITER',
+  EMPLOYEE = 'EMPLOYEE',
+  CANDIDATE = 'CANDIDATE',
 }
 
 export const DEFAULT_USER_ROLE = UserRole.CANDIDATE;

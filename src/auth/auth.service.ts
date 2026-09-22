@@ -9,8 +9,6 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
 import { randomInt, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
@@ -25,6 +23,16 @@ import { UserRole } from './roles.enum.js';
 export type AuthTokens = {
   accessToken: string;
   refreshToken: string;
+};
+
+type AuthUserResponse = {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  status: string;
+  roles: string[];
+  primaryRole: string;
 };
 
 @Injectable()
@@ -172,14 +180,12 @@ export class AuthService {
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        status: user.status,
-      },
+      user: await this.toAuthUserResponse(user.id),
     };
+  }
+
+  async getCurrentUser(userId: string): Promise<AuthUserResponse> {
+    return this.toAuthUserResponse(userId);
   }
 
   async requestOtp(dto: RequestOtpDto) {
@@ -384,20 +390,10 @@ export class AuthService {
       );
     }
 
-    const htmlTemplate = await this.loadHtmlTemplate('smtp-test-email.html');
-    const htmlBody = htmlTemplate
-      .replace(/{{recipientEmail}}/g, email)
-      .replace(/{{companyName}}/g, 'Titan Freelance')
-      .replace(
-        /{{message}}/g,
-        'This is a test email from the Titan Freelance backend. SMTP is configured correctly.',
-      );
-
     await this.sendMail(
       email,
-      'Rejection:: SBI Application Recruitment of Junior Associates ',
+      'Titan Freelance SMTP Test',
       'This is a test email from the Titan Freelance backend. SMTP is configured correctly.',
-      htmlBody,
     );
 
     this.logger.log(`SMTP test email sent successfully to ${email}`);
@@ -585,12 +581,54 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  private async sendMail(
-    to: string,
-    subject: string,
-    body: string,
-    html?: string,
-  ) {
+  private async toAuthUserResponse(userId: string): Promise<AuthUserResponse> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        status: true,
+        roles: {
+          select: {
+            role: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const roles = user.roles.map((entry) => entry.role.name);
+    const primaryRole =
+      [
+        UserRole.ADMIN,
+        UserRole.RECRUITER,
+        UserRole.EMPLOYEE,
+        UserRole.CANDIDATE,
+      ].find((role) => roles.includes(role)) ??
+      roles[0] ??
+      UserRole.CANDIDATE;
+
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      status: user.status,
+      roles,
+      primaryRole,
+    };
+  }
+
+  private async sendMail(to: string, subject: string, body: string) {
     const smtpHost = this.configService.get<string>('SMTP_HOST');
     if (!smtpHost) {
       return;
@@ -609,40 +647,12 @@ export class AuthService {
     this.logger.log(`Sending email to ${to} | subject: ${subject}`);
 
     await transporter.sendMail({
-      from: `"SBI Recruitment" <${this.configService.get<string>('SMTP_FROM') ?? 'no-reply@sbi.com'}>`,
+      from:
+        this.configService.get<string>('SMTP_FROM') ?? 'no-reply@example.com',
       to,
       subject,
       text: body,
-      ...(html ? { html } : {}),
     });
-  }
-
-  private async loadHtmlTemplate(templateName: string) {
-    const configuredPath = this.configService.get<string>(
-      'SMTP_TEST_TEMPLATE_PATH',
-    );
-    const candidates = [
-      configuredPath,
-      join(process.cwd(), 'src', 'templates', templateName),
-      join(process.cwd(), 'templates', templateName),
-    ].filter(Boolean) as string[];
-
-    for (const candidate of candidates) {
-      try {
-        return await readFile(candidate, 'utf8');
-      } catch {
-        continue;
-      }
-    }
-
-    return `
-      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #1f2937; padding: 24px;">
-        <h2 style="color: #111827;">{{companyName}}</h2>
-        <p>Hello {{recipientEmail}},</p>
-        <p>{{message}}</p>
-        <p>Thanks,<br />{{companyName}} Team</p>
-      </div>
-    `;
   }
 }
 

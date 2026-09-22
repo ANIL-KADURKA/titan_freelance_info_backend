@@ -77,7 +77,7 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current authenticated user' })
   getCurrentUser(@CurrentUser() user: { id: string; email: string }) {
-    return user;
+    return this.authService.getCurrentUser(user.id);
   }
 
   @Post('update-professional-email')
