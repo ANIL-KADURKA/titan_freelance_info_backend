@@ -25,6 +25,16 @@ export type AuthTokens = {
   refreshToken: string;
 };
 
+type AuthUserResponse = {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  status: string;
+  roles: string[];
+  primaryRole: string;
+};
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -170,14 +180,12 @@ export class AuthService {
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        status: user.status,
-      },
+      user: await this.toAuthUserResponse(user.id),
     };
+  }
+
+  async getCurrentUser(userId: string): Promise<AuthUserResponse> {
+    return this.toAuthUserResponse(userId);
   }
 
   async requestOtp(dto: RequestOtpDto) {
@@ -571,6 +579,53 @@ export class AuthService {
     );
 
     return { accessToken, refreshToken };
+  }
+
+  private async toAuthUserResponse(userId: string): Promise<AuthUserResponse> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        status: true,
+        roles: {
+          select: {
+            role: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const roles = user.roles.map((entry) => entry.role.name);
+    const primaryRole =
+      [
+        UserRole.ADMIN,
+        UserRole.RECRUITER,
+        UserRole.EMPLOYEE,
+        UserRole.CANDIDATE,
+      ].find((role) => roles.includes(role)) ??
+      roles[0] ??
+      UserRole.CANDIDATE;
+
+    return {
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      status: user.status,
+      roles,
+      primaryRole,
+    };
   }
 
   private async sendMail(to: string, subject: string, body: string) {

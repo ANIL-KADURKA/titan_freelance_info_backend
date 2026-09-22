@@ -21,6 +21,7 @@ import { CreateJobDto } from './dto/create-job.dto.js';
 import { UpdateJobApplicationFieldDto } from './dto/update-job-application-field.dto.js';
 import { UpdateJobCategoryDto } from './dto/update-job-category.dto.js';
 import { UpdateJobEligibilityRuleDto } from './dto/update-job-eligibility-rule.dto.js';
+import { UpdateJobStatusDto } from './dto/update-job-status.dto.js';
 import { UpdateJobDto } from './dto/update-job.dto.js';
 import { JobsService } from './jobs.service.js';
 
@@ -112,6 +113,14 @@ export class JobsController {
   @ApiOperation({ summary: 'Create a job' })
   createJob(@Body() dto: CreateJobDto, @CurrentUser() user: { id?: string }) {
     return this.jobsService.createJob(dto, user?.id);
+  }
+
+  @Patch(':id/status')
+  @Roles(UserRole.ADMIN, UserRole.RECRUITER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update only job publishing status' })
+  updateJobStatus(@Param('id') id: string, @Body() dto: UpdateJobStatusDto) {
+    return this.jobsService.updateJobStatus(id, dto.status);
   }
 
   @Patch(':id')
