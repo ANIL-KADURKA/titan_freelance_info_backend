@@ -7,14 +7,16 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger('Bootstrap');
 
+  const normalizeOrigin = (origin: string) => origin.trim().replace(/\/$/, '');
   const configuredOrigins = process.env.CORS_ORIGINS?.split(',')
-    .map((origin) => origin.trim())
+    .map(normalizeOrigin)
     .filter(Boolean);
   const allowedOrigins = new Set([
     'http://localhost:3000',
     'http://localhost:3001',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
+    'https://titan-freelance.netlify.app',
     ...(configuredOrigins ?? []),
   ]);
 
@@ -23,7 +25,7 @@ async function bootstrap() {
       origin: string | undefined,
       callback: (error: Error | null, allow?: boolean) => void,
     ) {
-      if (!origin || allowedOrigins.has(origin)) {
+      if (!origin || allowedOrigins.has(normalizeOrigin(origin))) {
         callback(null, true);
         return;
       }
