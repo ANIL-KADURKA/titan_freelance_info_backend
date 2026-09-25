@@ -11,6 +11,7 @@ import {
   WorkMode,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { UserRole } from '../auth/roles.enum.js';
 import { CreateJobApplicationFieldDto } from './dto/create-job-application-field.dto.js';
 import { UpdateJobApplicationFieldDto } from './dto/update-job-application-field.dto.js';
 import { CreateJobCategoryDto } from './dto/create-job-category.dto.js';
@@ -91,10 +92,12 @@ export class JobsService {
           select: { id: true, email: true, firstName: true, lastName: true },
         },
         applicationFields: {
-          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+          where: { deletedAt: null },
+          orderBy: [{ createdAt: 'asc' }],
         },
         eligibilityRules: {
-          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+          where: { deletedAt: null },
+          orderBy: [{ createdAt: 'asc' }],
         },
       },
     });
@@ -106,31 +109,45 @@ export class JobsService {
     return job;
   }
 
-  private async ensureUniqueCategorySlug(slug: string, excludeId?: string) {
-    const existing = await this.prisma.jobCategory.findFirst({
-      where: {
-        slug,
-        ...(excludeId ? { id: { not: excludeId } } : {}),
-      },
-    });
+  private async generateUniqueCategorySlug(value: string, excludeId?: string) {
+    const baseSlug = this.normalizeSlug(value, 'Job category');
+    let slug = baseSlug;
+    let suffix = 2;
 
-    if (existing) {
-      throw new BadRequestException('Job category slug already exists');
+    while (
+      await this.prisma.jobCategory.findFirst({
+        where: {
+          slug,
+          ...(excludeId ? { id: { not: excludeId } } : {}),
+        },
+      })
+    ) {
+      slug = `${baseSlug}-${suffix}`;
+      suffix += 1;
     }
+
+    return slug;
   }
 
-  private async ensureUniqueJobSlug(slug: string, excludeId?: string) {
-    const existing = await this.prisma.job.findFirst({
-      where: {
-        slug,
-        deletedAt: null,
-        ...(excludeId ? { id: { not: excludeId } } : {}),
-      },
-    });
+  private async generateUniqueJobSlug(value: string, excludeId?: string) {
+    const baseSlug = this.normalizeSlug(value, 'Job');
+    let slug = baseSlug;
+    let suffix = 2;
 
-    if (existing) {
-      throw new BadRequestException('Job slug already exists');
+    while (
+      await this.prisma.job.findFirst({
+        where: {
+          slug,
+          deletedAt: null,
+          ...(excludeId ? { id: { not: excludeId } } : {}),
+        },
+      })
+    ) {
+      slug = `${baseSlug}-${suffix}`;
+      suffix += 1;
     }
+
+    return slug;
   }
 
   private async ensureUniqueJobFieldKey(
@@ -175,7 +192,7 @@ export class JobsService {
 
   async findAllCategories() {
     return this.prisma.jobCategory.findMany({
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [{ createdAt: 'desc' }],
     });
   }
 
@@ -200,8 +217,7 @@ export class JobsService {
     }
 
     const name = dto.name.trim();
-    const slug = this.normalizeSlug(dto.slug ?? name, 'Job category');
-    await this.ensureUniqueCategorySlug(slug);
+    const slug = await this.generateUniqueCategorySlug(dto.slug ?? name);
 
     this.logger.log(`Creating job category: ${name} (${slug})`);
 
@@ -211,7 +227,6 @@ export class JobsService {
         slug,
         description: dto.description?.trim() || null,
         isActive: dto.isActive ?? true,
-        sortOrder: dto.sortOrder ?? 0,
       },
     });
   }
@@ -228,14 +243,10 @@ export class JobsService {
     }
 
     const nextName = dto.name?.trim() ?? category.name;
-    const nextSlug = this.normalizeSlug(
-      dto.slug ?? category.slug,
-      'Job category',
-    );
-
-    if (nextSlug !== category.slug) {
-      await this.ensureUniqueCategorySlug(nextSlug, id);
-    }
+    const nextSlug =
+      dto.slug !== undefined || dto.name !== undefined
+        ? await this.generateUniqueCategorySlug(dto.slug ?? nextName, id)
+        : category.slug;
 
     this.logger.log(`Updating job category: ${id}`);
 
@@ -249,7 +260,6 @@ export class JobsService {
             ? dto.description?.trim() || null
             : category.description,
         isActive: dto.isActive ?? category.isActive,
-        sortOrder: dto.sortOrder ?? category.sortOrder,
       },
     });
   }
@@ -349,10 +359,10 @@ export class JobsService {
           select: { id: true, email: true, firstName: true, lastName: true },
         },
         applicationFields: {
-          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+          orderBy: [{ createdAt: 'asc' }],
         },
         eligibilityRules: {
-          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+          orderBy: [{ createdAt: 'asc' }],
         },
       },
       orderBy: [{ createdAt: 'desc' }],
@@ -361,6 +371,64 @@ export class JobsService {
 
   async findJobById(id: string) {
     return this.ensureJobExists(id);
+  }
+
+  async findJobByIdForUser(id: string, userId?: string) {
+    this.assertValidUuid(id, 'job');
+
+    const canViewAllJobs = userId
+      ? await this.userHasAnyRole(userId, [UserRole.ADMIN])
+      : false;
+    const job = await this.prisma.job.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+        ...(canViewAllJobs
+          ? {}
+          : {
+              status: { in: [JobStatus.PUBLISHED, JobStatus.CLOSED] },
+              category: { isActive: true },
+            }),
+      },
+      include: {
+        category: true,
+        createdBy: canViewAllJobs
+          ? {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+              },
+            }
+          : false,
+        applicationFields: {
+          where: { deletedAt: null },
+          orderBy: [{ createdAt: 'asc' }],
+        },
+        eligibilityRules: {
+          where: { deletedAt: null },
+          orderBy: [{ createdAt: 'asc' }],
+        },
+      },
+    });
+
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
+
+    return job;
+  }
+
+  private async userHasAnyRole(userId: string, roles: UserRole[]) {
+    const roleCount = await this.prisma.userRole.count({
+      where: {
+        userId,
+        role: { name: { in: roles } },
+      },
+    });
+
+    return roleCount > 0;
   }
 
   async findPublicJobByIdentifier(identifier: string) {
@@ -385,16 +453,46 @@ export class JobsService {
         category: true,
         applicationFields: {
           where: { deletedAt: null },
-          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+          orderBy: [{ createdAt: 'asc' }],
+        },
+        eligibilityRules: {
+          where: { deletedAt: null },
+          orderBy: [{ createdAt: 'asc' }],
         },
       },
     });
 
     if (!job) {
+      await this.logPublicJobLookupMiss(normalizedIdentifier);
       throw new NotFoundException('Job not found');
     }
 
     return job;
+  }
+
+  private async logPublicJobLookupMiss(identifier: string) {
+    const identifierWhere = this.isUuid(identifier)
+      ? { id: identifier }
+      : { slug: identifier };
+    const existing = await this.prisma.job.findFirst({
+      where: { ...identifierWhere },
+      include: {
+        category: { select: { id: true, name: true, isActive: true } },
+      },
+    });
+
+    if (!existing) {
+      this.logger.warn(
+        `Public job lookup failed: ${identifier} does not exist`,
+      );
+      return;
+    }
+
+    this.logger.warn(
+      `Public job lookup failed: ${identifier} exists but is not public | status=${existing.status} | deletedAt=${
+        existing.deletedAt?.toISOString() ?? 'null'
+      } | category=${existing.category.name} | categoryActive=${existing.category.isActive}`,
+    );
   }
 
   async searchJobs(query: SearchJobsDto, scope: JobSearchScope) {
@@ -464,13 +562,9 @@ export class JobsService {
                 }
               : false,
           applicationFields:
-            scope === 'admin'
-              ? { orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }] }
-              : false,
+            scope === 'admin' ? { orderBy: [{ createdAt: 'asc' }] } : false,
           eligibilityRules:
-            scope === 'admin'
-              ? { orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }] }
-              : false,
+            scope === 'admin' ? { orderBy: [{ createdAt: 'asc' }] } : false,
         },
         orderBy,
         skip: (page - 1) * pageSize,
@@ -478,7 +572,7 @@ export class JobsService {
       }),
       this.prisma.jobCategory.findMany({
         where: scope === 'public' ? { isActive: true } : {},
-        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+        orderBy: [{ createdAt: 'desc' }],
       }),
     ]);
 
@@ -526,8 +620,7 @@ export class JobsService {
     await this.ensureUserExists(createdById);
 
     const title = dto.title.trim();
-    const slug = this.normalizeSlug(dto.slug ?? title, 'Job');
-    await this.ensureUniqueJobSlug(slug);
+    const slug = await this.generateUniqueJobSlug(dto.slug ?? title);
 
     this.logger.log(`Creating job: ${title} (${slug}) for user ${createdById}`);
 
@@ -590,14 +683,10 @@ export class JobsService {
     }
 
     const nextTitle = dto.title?.trim() ?? existing.title;
-    const nextSlug = this.normalizeSlug(
-      dto.slug ?? (dto.title ? nextTitle : existing.slug),
-      'Job',
-    );
-
-    if (nextSlug !== existing.slug) {
-      await this.ensureUniqueJobSlug(nextSlug, id);
-    }
+    const nextSlug =
+      dto.slug !== undefined || dto.title !== undefined
+        ? await this.generateUniqueJobSlug(dto.slug ?? nextTitle, id)
+        : existing.slug;
 
     const nextPublishedAt =
       dto.publishedAt !== undefined ? dto.publishedAt : existing.publishedAt;
@@ -798,7 +887,7 @@ export class JobsService {
 
     return this.prisma.jobApplicationField.findMany({
       where: { jobId },
-      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [{ createdAt: 'asc' }],
     });
   }
 
@@ -828,7 +917,6 @@ export class JobsService {
               ? dto.description?.trim() || null
               : existing.description,
           required: dto.required ?? existing.required,
-          displayOrder: dto.displayOrder ?? existing.displayOrder,
           options:
             dto.options === undefined
               ? (existing.options ?? Prisma.JsonNull)
@@ -849,7 +937,6 @@ export class JobsService {
         label: dto.label.trim(),
         description: dto.description?.trim() || null,
         required: dto.required ?? false,
-        displayOrder: dto.displayOrder ?? 0,
         options: (dto.options as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       },
     });
@@ -876,7 +963,6 @@ export class JobsService {
         label: dto.label.trim(),
         description: dto.description?.trim() || null,
         required: dto.required ?? false,
-        displayOrder: dto.displayOrder ?? 0,
         options: (dto.options as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       },
     });
@@ -914,7 +1000,6 @@ export class JobsService {
             ? dto.description?.trim() || null
             : field.description,
         required: dto.required ?? field.required,
-        displayOrder: dto.displayOrder ?? field.displayOrder,
         options:
           dto.options === undefined
             ? (field.options ?? Prisma.JsonNull)
@@ -945,7 +1030,7 @@ export class JobsService {
 
     return this.prisma.jobEligibilityRule.findMany({
       where: { jobId },
-      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [{ createdAt: 'asc' }],
     });
   }
 
@@ -973,7 +1058,6 @@ export class JobsService {
         fieldType: dto.fieldType,
         operator: dto.operator,
         value: dto.value as Prisma.InputJsonValue,
-        displayOrder: dto.displayOrder ?? 0,
       },
     });
   }
@@ -1010,7 +1094,6 @@ export class JobsService {
         fieldType: dto.fieldType ?? rule.fieldType,
         operator: dto.operator ?? rule.operator,
         value: (dto.value ?? rule.value) as Prisma.InputJsonValue,
-        displayOrder: dto.displayOrder ?? rule.displayOrder,
       },
     });
   }

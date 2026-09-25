@@ -1,6 +1,7 @@
 import {
   CallHandler,
   ExecutionContext,
+  HttpException,
   Injectable,
   Logger,
   NestInterceptor,
@@ -36,8 +37,14 @@ export class LoggingInterceptor implements NestInterceptor {
         },
         error: (error) => {
           const duration = Date.now() - start;
+          const status =
+            error instanceof HttpException
+              ? error.getStatus()
+              : res.statusCode >= 400
+                ? res.statusCode
+                : 'unknown';
           this.logger.error(
-            `Failed ${method} ${url} | status=${res.statusCode ?? 'unknown'} | duration=${duration}ms${
+            `Failed ${method} ${url} | status=${status} | duration=${duration}ms${
               userId ? ` | userId=${userId}` : ''
             } | error=${error?.message ?? String(error)}`,
             error?.stack,
