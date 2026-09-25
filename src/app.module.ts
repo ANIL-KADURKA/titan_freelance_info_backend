@@ -11,6 +11,7 @@ import { JobsModule } from './jobs/jobs.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { TestimonialsModule } from './testimonials/testimonials.module.js';
 import { UserModule } from './user/user.module.js';
+import { WebsiteContentModule } from './website-content/website-content.module.js';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { UserModule } from './user/user.module.js';
     FaqModule,
     JobsModule,
     TestimonialsModule,
+    WebsiteContentModule,
   ],
   controllers: [AppController],
   providers: [
