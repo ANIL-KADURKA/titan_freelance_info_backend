@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -18,6 +19,7 @@ import { CreateJobApplicationFieldDto } from './dto/create-job-application-field
 import { CreateJobCategoryDto } from './dto/create-job-category.dto.js';
 import { CreateJobEligibilityRuleDto } from './dto/create-job-eligibility-rule.dto.js';
 import { CreateJobDto } from './dto/create-job.dto.js';
+import { SearchJobsDto } from './dto/search-jobs.dto.js';
 import { UpdateJobApplicationFieldDto } from './dto/update-job-application-field.dto.js';
 import { UpdateJobCategoryDto } from './dto/update-job-category.dto.js';
 import { UpdateJobEligibilityRuleDto } from './dto/update-job-eligibility-rule.dto.js';
@@ -97,6 +99,14 @@ export class JobsController {
   @ApiOperation({ summary: 'List all jobs' })
   findAllJobs() {
     return this.jobsService.findAllJobs();
+  }
+
+  @Get('search')
+  @Roles(UserRole.ADMIN, UserRole.RECRUITER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Search jobs for admin and recruiter screens' })
+  searchJobs(@Query() query: SearchJobsDto) {
+    return this.jobsService.searchJobs(query, 'admin');
   }
 
   @Get(':id')

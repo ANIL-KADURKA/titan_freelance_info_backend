@@ -16,9 +16,12 @@ import { UpdateJobApplicationFieldDto } from './dto/update-job-application-field
 import { CreateJobCategoryDto } from './dto/create-job-category.dto.js';
 import { UpdateJobCategoryDto } from './dto/update-job-category.dto.js';
 import { CreateJobEligibilityRuleDto } from './dto/create-job-eligibility-rule.dto.js';
+import { JobSearchSort, SearchJobsDto } from './dto/search-jobs.dto.js';
 import { UpdateJobEligibilityRuleDto } from './dto/update-job-eligibility-rule.dto.js';
 import { CreateJobDto } from './dto/create-job.dto.js';
 import { UpdateJobDto } from './dto/update-job.dto.js';
+
+type JobSearchScope = 'admin' | 'public';
 
 @Injectable()
 export class JobsService {
@@ -360,6 +363,144 @@ export class JobsService {
     return this.ensureJobExists(id);
   }
 
+  async findPublicJobByIdentifier(identifier: string) {
+    const normalizedIdentifier = identifier.trim();
+
+    if (!normalizedIdentifier) {
+      throw new BadRequestException('Job identifier is required');
+    }
+
+    const identifierWhere = this.isUuid(normalizedIdentifier)
+      ? { id: normalizedIdentifier }
+      : { slug: normalizedIdentifier };
+
+    const job = await this.prisma.job.findFirst({
+      where: {
+        ...identifierWhere,
+        deletedAt: null,
+        status: { in: [JobStatus.PUBLISHED, JobStatus.CLOSED] },
+        category: { isActive: true },
+      },
+      include: {
+        category: true,
+        applicationFields: {
+          where: { deletedAt: null },
+          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }],
+        },
+      },
+    });
+
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
+
+    return job;
+  }
+
+  async searchJobs(query: SearchJobsDto, scope: JobSearchScope) {
+    const page = this.parsePositiveInt(query.page, 1, 1, 500);
+    const pageSize = this.parsePositiveInt(query.pageSize, 12, 1, 100);
+    const searchTerm = query.q?.trim();
+    const location = query.location?.trim();
+    const skills = this.parseCsv(query.skills);
+
+    const where: Prisma.JobWhereInput = {
+      deletedAt: null,
+    };
+
+    if (scope === 'public') {
+      where.status = { in: [JobStatus.PUBLISHED, JobStatus.CLOSED] };
+    } else if (query.status) {
+      where.status = query.status;
+    }
+
+    if (query.categorySlug?.trim()) {
+      where.category = {
+        slug: query.categorySlug.trim(),
+        ...(scope === 'public' ? { isActive: true } : {}),
+      };
+    } else if (scope === 'public') {
+      where.category = { isActive: true };
+    }
+
+    if (query.workMode) {
+      where.workMode = query.workMode;
+    }
+
+    if (location) {
+      where.location = { contains: location, mode: 'insensitive' };
+    }
+
+    if (skills.length > 0) {
+      where.skills = { hasSome: skills };
+    }
+
+    if (searchTerm) {
+      where.OR = [
+        { title: { contains: searchTerm, mode: 'insensitive' } },
+        { summary: { contains: searchTerm, mode: 'insensitive' } },
+        { description: { contains: searchTerm, mode: 'insensitive' } },
+        { location: { contains: searchTerm, mode: 'insensitive' } },
+        { skills: { has: searchTerm } },
+      ];
+    }
+
+    const orderBy = this.getJobSearchOrderBy(query.sort);
+    const [total, data, categories] = await this.prisma.$transaction([
+      this.prisma.job.count({ where }),
+      this.prisma.job.findMany({
+        where,
+        include: {
+          category: true,
+          createdBy:
+            scope === 'admin'
+              ? {
+                  select: {
+                    id: true,
+                    email: true,
+                    firstName: true,
+                    lastName: true,
+                  },
+                }
+              : false,
+          applicationFields:
+            scope === 'admin'
+              ? { orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }] }
+              : false,
+          eligibilityRules:
+            scope === 'admin'
+              ? { orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }] }
+              : false,
+        },
+        orderBy,
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.jobCategory.findMany({
+        where: scope === 'public' ? { isActive: true } : {},
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+      }),
+    ]);
+
+    return {
+      data,
+      meta: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+      facets: {
+        categories,
+        workModes: Object.values(WorkMode),
+        statuses:
+          scope === 'public'
+            ? [JobStatus.PUBLISHED, JobStatus.CLOSED]
+            : Object.values(JobStatus),
+      },
+    };
+  }
+
   async createJob(dto: CreateJobDto, currentUserId?: string) {
     if (!dto.title?.trim()) {
       throw new BadRequestException('Job title is required');
@@ -597,6 +738,59 @@ export class JobsService {
 
   async deleteJob(id: string) {
     return this.softDeleteJob(id);
+  }
+
+  private parseCsv(value?: string) {
+    return (value ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+
+  private isUuid(value: string) {
+    const uuidPattern =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
+
+    return uuidPattern.test(value);
+  }
+
+  private parsePositiveInt(
+    value: string | undefined,
+    fallback: number,
+    min: number,
+    max: number,
+  ) {
+    const parsed = Number.parseInt(value ?? '', 10);
+
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+
+    return Math.min(Math.max(parsed, min), max);
+  }
+
+  private getJobSearchOrderBy(
+    sort: JobSearchSort | undefined,
+  ): Prisma.JobOrderByWithRelationInput[] {
+    switch (sort) {
+      case JobSearchSort.OLDEST:
+        return [{ createdAt: 'asc' }];
+      case JobSearchSort.RECENTLY_PUBLISHED:
+        return [{ publishedAt: 'desc' }, { createdAt: 'desc' }];
+      case JobSearchSort.DEADLINE_SOON:
+        return [{ applicationDeadline: 'asc' }, { createdAt: 'desc' }];
+      case JobSearchSort.DEADLINE_LATEST:
+        return [{ applicationDeadline: 'desc' }, { createdAt: 'desc' }];
+      case JobSearchSort.TITLE_ASC:
+        return [{ title: 'asc' }];
+      case JobSearchSort.TITLE_DESC:
+        return [{ title: 'desc' }];
+      case JobSearchSort.OPENINGS_HIGH:
+        return [{ openings: 'desc' }, { createdAt: 'desc' }];
+      case JobSearchSort.NEWEST:
+      default:
+        return [{ createdAt: 'desc' }];
+    }
   }
 
   async findJobApplicationFields(jobId: string) {
