@@ -119,6 +119,29 @@ enum EligibilityOperator {
   CONTAINS
 }
 
+enum WebsiteScreen {
+  HOME
+  ABOUT
+  JOBS
+  CONTACT
+  FAQ
+  TESTIMONIALS
+  CASE_STUDIES
+  ANNOUNCEMENTS
+}
+
+model WebsiteContent {
+  id        String        @id @default(uuid())
+  screenKey WebsiteScreen @unique @map("screen_key")
+  content   Json
+  version   Int           @default(1)
+  updatedBy String?       @map("updated_by")
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  @@map("website_content")
+}
+
 model FaqCategory {
   id          String        @id @default(uuid()) @db.Uuid
   name        String
