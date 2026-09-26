@@ -6,6 +6,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Min,
 } from 'class-validator';
 
@@ -64,4 +65,14 @@ export class UpdateJobApplicationFieldDto {
   @IsOptional()
   options?:
     Record<string, unknown> | unknown[] | string[] | number[] | boolean[];
+
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  profileFieldId?: string;
+
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  documentTypeId?: string;
 }

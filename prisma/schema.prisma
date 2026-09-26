@@ -14,6 +14,13 @@ enum AccountStatus {
   NOT_ELIGIBLE
 }
 
+enum RoleName {
+  ADMIN
+  RECRUITER
+  EMPLOYEE
+  CANDIDATE
+}
+
 enum AuthTokenType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
@@ -119,6 +126,46 @@ enum EligibilityOperator {
   CONTAINS
 }
 
+enum ApplicationStatus {
+  APPLIED
+  IN_REVIEW
+  SHORTLISTED
+  INTERVIEW
+  OFFERED
+  HIRED
+  REJECTED
+  WITHDRAWN
+}
+
+enum DocumentVerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum WebsiteScreen {
+  HOME
+  ABOUT
+  JOBS
+  CONTACT
+  FAQ
+  TESTIMONIALS
+  CASE_STUDIES
+  ANNOUNCEMENTS
+}
+
+model WebsiteContent {
+  id        String        @id @default(uuid())
+  screenKey WebsiteScreen @unique @map("screen_key")
+  content   Json
+  version   Int           @default(1)
+  updatedBy String?       @map("updated_by")
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  @@map("website_content")
+}
+
 model FaqCategory {
   id          String        @id @default(uuid()) @db.Uuid
   name        String
@@ -154,40 +201,46 @@ model Faq {
 }
 
 model User {
-  id                      String          @id @default(uuid()) @db.Uuid
-  email                   String          @unique @db.VarChar(320)
-  personalEmail           String          @unique @map("personal_email") @db.VarChar(320)
-  phone                   String?         @db.VarChar(20)
-  firstName               String?         @map("first_name")
-  lastName                String?         @map("last_name")
+  id                      String        @id @default(uuid()) @db.Uuid
+  email                   String        @unique @db.VarChar(320)
+  personalEmail           String        @unique @map("personal_email") @db.VarChar(320)
+  phone                   String?       @db.VarChar(20)
+  firstName               String?       @map("first_name")
+  lastName                String?       @map("last_name")
   gender                  GenderEnum?
-  whatsappNumber          String?         @map("whatsapp_number") @db.VarChar(20)
-  dateOfBirth             DateTime?       @map("date_of_birth") @db.Date
-  profileImageId          String?         @map("profile_image_id") @db.Uuid
-  passwordHash            String          @map("password_hash")
-  status                  AccountStatus   @default(PENDING_VERIFICATION)
-  statusReason            String?         @map("status_reason")
-  emailVerifiedAt         DateTime?       @map("email_verified_at") @db.Timestamptz()
-  failedLoginCount        Int             @default(0) @map("failed_login_count")
-  lockedUntil             DateTime?       @map("locked_until") @db.Timestamptz()
-  lastLoginAt             DateTime?       @map("last_login_at") @db.Timestamptz()
-  lastLoginIp             String?         @map("last_login_ip")
-  announcementEmailOptOut Boolean         @default(false) @map("announcement_email_opt_out")
-  createdAt               DateTime        @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt               DateTime        @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt               DateTime?       @map("deleted_at") @db.Timestamptz()
-  additionalDetails       Json?           @map("additional_details")
+  whatsappNumber          String?       @map("whatsapp_number") @db.VarChar(20)
+  dateOfBirth             DateTime?     @map("date_of_birth") @db.Date
+  profileImageId          String?       @map("profile_image_id") @db.Uuid
+  passwordHash            String        @map("password_hash")
+  status                  AccountStatus @default(PENDING_VERIFICATION)
+  statusReason            String?       @map("status_reason")
+  emailVerifiedAt         DateTime?     @map("email_verified_at") @db.Timestamptz()
+  failedLoginCount        Int           @default(0) @map("failed_login_count")
+  lockedUntil             DateTime?     @map("locked_until") @db.Timestamptz()
+  lastLoginAt             DateTime?     @map("last_login_at") @db.Timestamptz()
+  lastLoginIp             String?       @map("last_login_ip")
+  announcementEmailOptOut Boolean       @default(false) @map("announcement_email_opt_out")
+  createdAt               DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt               DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt               DateTime?     @map("deleted_at") @db.Timestamptz()
+  additionalDetails       Json?         @map("additional_details")
 
-  addresses        UserAddress[]
-  educations       UserEducation[]
-  socialLinks      UserSocialMediaLink[]
-  professionalInfo UserProfessionalInfo?
-  roles            UserRole[]
-  sessions         Session[]
-  authOtps         AuthOtp[]
-  consentRecords   ConsentRecord[]
-  uploadedFiles    FileObject[] @relation("UploadedByUser")
-  createdJobs      Job[]        @relation("CreatedJobs")
+  addresses                    UserAddress[]
+  educations                   UserEducation[]
+  socialLinks                  UserSocialMediaLink[]
+  professionalInfo             UserProfessionalInfo?
+  roles                        UserRole[]
+  sessions                     Session[]
+  authOtps                     AuthOtp[]
+  consentRecords               ConsentRecord[]
+  uploadedFiles                FileObject[]               @relation("UploadedByUser")
+  createdJobs                  Job[]                      @relation("CreatedJobs")
+  applications                 CandidateApplication[]     @relation("CandidateApplications")
+  assignedApplications         CandidateApplication[]     @relation("AssignedApplications")
+  applicationStatusChanges     ApplicationStatusHistory[] @relation("ApplicationStatusChangedBy")
+  verifiedApplicationDocuments JobApplicationDocument[]   @relation("DocumentVerifiedBy")
+  candidateProfileValues       CandidateProfileValue[]
+  candidateProfileDocuments    CandidateProfileDocument[]
 
   @@index([status])
   @@map("users")
@@ -210,35 +263,36 @@ model JobCategory {
 }
 
 model Job {
-  id                     String               @id @default(uuid()) @db.Uuid
-  slug                   String               @unique @db.VarChar(200)
-  title                  String
-  categoryId             String               @map("category_id") @db.Uuid
-  createdById            String               @map("created_by_id") @db.Uuid
-  summary                String?
-  description            String
-  skills                 String[]             @default([])
-  requirements           String[]             @default([])
-  location               String?
-  workMode               WorkMode             @default(REMOTE) @map("work_mode")
-  duration               String?
-  openings               Int?
-  applicationInstructions String[]            @default([]) @map("application_instructions")
-  workInstructions       String[]             @default([]) @map("work_instructions")
-  additionalInfo         Json?                @map("additional_info")
-  coverImageId           String?              @map("cover_image_id") @db.Uuid
-  status                 JobStatus            @default(DRAFT)
-  publishedAt            DateTime?            @map("published_at") @db.Timestamptz()
-  applicationDeadline    DateTime?            @map("application_deadline") @db.Timestamptz()
-  closedAt               DateTime?            @map("closed_at") @db.Timestamptz()
-  createdAt              DateTime             @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt              DateTime             @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt              DateTime?            @map("deleted_at") @db.Timestamptz()
+  id                      String    @id @default(uuid()) @db.Uuid
+  slug                    String    @unique @db.VarChar(200)
+  title                   String
+  categoryId              String    @map("category_id") @db.Uuid
+  createdById             String    @map("created_by_id") @db.Uuid
+  summary                 String?
+  description             String
+  skills                  String[]  @default([])
+  requirements            String[]  @default([])
+  location                String?
+  workMode                WorkMode  @default(REMOTE) @map("work_mode")
+  duration                String?
+  openings                Int?
+  applicationInstructions String[]  @default([]) @map("application_instructions")
+  workInstructions        String[]  @default([]) @map("work_instructions")
+  additionalInfo          Json?     @map("additional_info")
+  coverImageId            String?   @map("cover_image_id") @db.Uuid
+  status                  JobStatus @default(DRAFT)
+  publishedAt             DateTime? @map("published_at") @db.Timestamptz()
+  applicationDeadline     DateTime? @map("application_deadline") @db.Timestamptz()
+  closedAt                DateTime? @map("closed_at") @db.Timestamptz()
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt               DateTime? @map("deleted_at") @db.Timestamptz()
 
-  category          JobCategory          @relation(fields: [categoryId], references: [id])
-  createdBy         User                 @relation("CreatedJobs", fields: [createdById], references: [id])
+  category          JobCategory            @relation(fields: [categoryId], references: [id])
+  createdBy         User                   @relation("CreatedJobs", fields: [createdById], references: [id])
   applicationFields JobApplicationField[]
   eligibilityRules  JobEligibilityRule[]
+  applications      CandidateApplication[]
 
   @@index([status, publishedAt])
   @@index([categoryId])
@@ -249,25 +303,200 @@ model Job {
 }
 
 model JobApplicationField {
-  id            String                @id @default(uuid()) @db.Uuid
-  jobId         String                @map("job_id") @db.Uuid
-  fieldKey      String                @map("field_key") @db.VarChar(100)
-  fieldType     ApplicationFieldType  @map("field_type")
-  label         String                @db.VarChar(200)
-  description   String?
-  required      Boolean               @default(false)
-  displayOrder  Int                   @default(0) @map("display_order")
-  options       Json?
-  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt     DateTime              @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt     DateTime?             @map("deleted_at") @db.Timestamptz()
+  id             String               @id @default(uuid()) @db.Uuid
+  jobId          String               @map("job_id") @db.Uuid
+  fieldKey       String               @map("field_key") @db.VarChar(100)
+  fieldType      ApplicationFieldType @map("field_type")
+  label          String               @db.VarChar(200)
+  description    String?
+  required       Boolean              @default(false)
+  displayOrder   Int                  @default(0) @map("display_order")
+  options        Json?
+  documentTypeId String?              @map("document_type_id") @db.Uuid
+  profileFieldId String?              @map("profile_field_id") @db.Uuid
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt      DateTime?            @map("deleted_at") @db.Timestamptz()
 
-  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  job          Job                        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  documentType DocumentType?              @relation(fields: [documentTypeId], references: [id])
+  profileField CandidateProfileField?     @relation(fields: [profileFieldId], references: [id], onDelete: SetNull)
+  fieldValues  JobApplicationFieldValue[]
 
   @@unique([jobId, fieldKey])
-  @@index([jobId])
   @@index([jobId, displayOrder])
+  @@index([documentTypeId])
+  @@index([profileFieldId])
   @@map("job_application_fields")
+}
+
+model CandidateApplication {
+  id              String            @id @default(uuid()) @db.Uuid
+  applicationNo   String            @unique @map("application_no") @db.VarChar(30)
+  userId          String            @map("user_id") @db.Uuid
+  jobId           String            @map("job_id") @db.Uuid
+  status          ApplicationStatus @default(APPLIED)
+  statusChangedAt DateTime          @default(now()) @map("status_changed_at") @db.Timestamptz()
+  coverNote       String?           @map("cover_note")
+  rejectionReason String?           @map("rejection_reason")
+  withdrawnReason String?           @map("withdrawn_reason")
+  assignedToId    String?           @map("assigned_to_id") @db.Uuid
+  source          String?
+  appliedAt       DateTime          @default(now()) @map("applied_at") @db.Timestamptz()
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz()
+
+  candidate  User  @relation("CandidateApplications", fields: [userId], references: [id])
+  job        Job   @relation(fields: [jobId], references: [id])
+  assignedTo User? @relation("AssignedApplications", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  statusHistory ApplicationStatusHistory[]
+  documents     JobApplicationDocument[]
+  fieldValues   JobApplicationFieldValue[]
+
+  @@unique([userId, jobId])
+  @@index([jobId, status])
+  @@index([status, statusChangedAt])
+  @@index([assignedToId])
+  @@index([deletedAt])
+  @@map("applications")
+}
+
+model ApplicationStatusHistory {
+  id            String             @id @default(uuid()) @db.Uuid
+  applicationId String             @map("application_id") @db.Uuid
+  fromStatus    ApplicationStatus? @map("from_status")
+  toStatus      ApplicationStatus  @map("to_status")
+  changedById   String?            @map("changed_by_id") @db.Uuid
+  comment       String?
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz()
+
+  application CandidateApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  changedBy   User?                @relation("ApplicationStatusChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([applicationId, createdAt])
+  @@map("application_status_history")
+}
+
+model DocumentType {
+  id                  String   @id @default(uuid()) @db.Uuid
+  key                 String   @unique @db.VarChar(100)
+  name                String   @db.VarChar(200)
+  description         String?
+  allowedMimeTypes    String[] @default([]) @map("allowed_mime_types")
+  maxSizeBytes        Int?     @map("max_size_bytes")
+  sensitive           Boolean  @default(false)
+  allowCandidateReuse Boolean  @default(false) @map("allow_candidate_reuse")
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  applicationFields    JobApplicationField[]
+  applicationDocuments JobApplicationDocument[]
+  candidateDocuments   CandidateProfileDocument[]
+
+  @@map("document_types")
+}
+
+model JobApplicationDocument {
+  id                  String                     @id @default(uuid()) @db.Uuid
+  applicationId       String                     @map("application_id") @db.Uuid
+  documentTypeId      String                     @map("document_type_id") @db.Uuid
+  fileObjectId        String                     @map("file_object_id") @db.Uuid
+  candidateDocumentId String?                    @map("candidate_document_id") @db.Uuid
+  fieldKey            String?                    @map("field_key") @db.VarChar(100)
+  version             Int                        @default(1)
+  isCurrent           Boolean                    @default(true) @map("is_current")
+  verificationStatus  DocumentVerificationStatus @default(PENDING) @map("verification_status")
+  verifiedAt          DateTime?                  @map("verified_at") @db.Timestamptz()
+  verifiedById        String?                    @map("verified_by_id") @db.Uuid
+  verificationComment String?                    @map("verification_comment")
+  createdAt           DateTime                   @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt           DateTime                   @updatedAt @map("updated_at") @db.Timestamptz()
+
+  application       CandidateApplication      @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  documentType      DocumentType              @relation(fields: [documentTypeId], references: [id])
+  fileObject        FileObject                @relation(fields: [fileObjectId], references: [id])
+  candidateDocument CandidateProfileDocument? @relation(fields: [candidateDocumentId], references: [id], onDelete: SetNull)
+  verifiedBy        User?                     @relation("DocumentVerifiedBy", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([applicationId, fieldKey])
+  @@index([documentTypeId])
+  @@index([fileObjectId])
+  @@index([candidateDocumentId])
+  @@map("job_application_documents")
+}
+
+model CandidateProfileField {
+  id          String               @id @default(uuid()) @db.Uuid
+  key         String               @unique @db.VarChar(100)
+  label       String               @db.VarChar(200)
+  description String?
+  fieldType   ApplicationFieldType @map("field_type")
+  isSensitive Boolean              @default(false) @map("is_sensitive")
+  isActive    Boolean              @default(true) @map("is_active")
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz()
+
+  values    CandidateProfileValue[]
+  jobFields JobApplicationField[]
+
+  @@map("candidate_profile_fields")
+}
+
+model CandidateProfileValue {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  fieldId   String   @map("field_id") @db.Uuid
+  value     Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  user  User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  field CandidateProfileField @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, fieldId])
+  @@index([fieldId])
+  @@map("candidate_profile_values")
+}
+
+model CandidateProfileDocument {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  userId             String                     @map("user_id") @db.Uuid
+  documentTypeId     String                     @map("document_type_id") @db.Uuid
+  fileObjectId       String                     @unique @map("file_object_id") @db.Uuid
+  version            Int                        @default(1)
+  isCurrent          Boolean                    @default(true) @map("is_current")
+  expiresAt          DateTime?                  @map("expires_at") @db.Timestamptz()
+  verificationStatus DocumentVerificationStatus @default(PENDING) @map("verification_status")
+  verifiedAt         DateTime?                  @map("verified_at") @db.Timestamptz()
+  createdAt          DateTime                   @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime                   @updatedAt @map("updated_at") @db.Timestamptz()
+
+  user                 User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentType         DocumentType             @relation(fields: [documentTypeId], references: [id])
+  fileObject           FileObject               @relation(fields: [fileObjectId], references: [id])
+  applicationDocuments JobApplicationDocument[]
+
+  @@index([userId, documentTypeId, isCurrent])
+  @@map("candidate_profile_documents")
+}
+
+model JobApplicationFieldValue {
+  id            String   @id @default(uuid()) @db.Uuid
+  applicationId String   @map("application_id") @db.Uuid
+  fieldId       String   @map("field_id") @db.Uuid
+  value         Json
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  application CandidateApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  field       JobApplicationField  @relation(fields: [fieldId], references: [id], onDelete: Restrict)
+
+  @@unique([applicationId, fieldId])
+  @@index([fieldId])
+  @@map("job_application_field_values")
 }
 
 model JobEligibilityRule {
@@ -284,19 +513,18 @@ model JobEligibilityRule {
 
   job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
-  @@index([jobId])
   @@index([jobId, displayOrder])
   @@index([jobId, fieldKey])
   @@map("job_eligibility_rules")
 }
 
 model Role {
-  id          String           @id @default(uuid()) @db.Uuid
-  name        String           @unique
+  id          String   @id @default(uuid()) @db.Uuid
+  name        RoleName @unique
   description String?
-  isSystem    Boolean          @default(false) @map("is_system")
-  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz()
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz()
 
   permissions RolePermission[]
   users       UserRole[]
@@ -305,9 +533,9 @@ model Role {
 }
 
 model Permission {
-  id          String           @id @default(uuid()) @db.Uuid
-  key         String           @unique @db.VarChar(100)
-  module      String           @db.VarChar(60)
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique @db.VarChar(100)
+  module      String  @db.VarChar(60)
   description String?
 
   roles RolePermission[]
@@ -357,15 +585,15 @@ model Session {
 }
 
 model AuthOtp {
-  id           String     @id @default(uuid()) @db.Uuid
-  userId       String     @map("user_id") @db.Uuid
-  purpose      OtpPurpose
-  otpHash      String     @map("otp_hash") @db.VarChar(255)
-  expiresAt    DateTime   @map("expires_at") @db.Timestamptz()
-  attempts     Int        @default(0)
-  maxAttempts  Int        @default(5) @map("max_attempts")
-  verifiedAt   DateTime?  @map("verified_at") @db.Timestamptz()
-  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz()
+  id          String     @id @default(uuid()) @db.Uuid
+  userId      String     @map("user_id") @db.Uuid
+  purpose     OtpPurpose
+  otpHash     String     @map("otp_hash") @db.VarChar(255)
+  expiresAt   DateTime   @map("expires_at") @db.Timestamptz()
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(5) @map("max_attempts")
+  verifiedAt  DateTime?  @map("verified_at") @db.Timestamptz()
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz()
 
   user User @relation(fields: [userId], references: [id])
 
@@ -375,14 +603,14 @@ model AuthOtp {
 }
 
 model ConsentRecord {
-  id          String       @id @default(uuid()) @db.Uuid
-  userId      String       @map("user_id") @db.Uuid
+  id          String      @id @default(uuid()) @db.Uuid
+  userId      String      @map("user_id") @db.Uuid
   type        ConsentType
-  version     String       @db.VarChar(30)
-  grantedAt   DateTime     @default(now()) @map("granted_at") @db.Timestamptz()
-  withdrawnAt DateTime?    @map("withdrawn_at") @db.Timestamptz()
-  ipAddress   String?      @map("ip_address")
-  userAgent   String?      @map("user_agent")
+  version     String      @db.VarChar(30)
+  grantedAt   DateTime    @default(now()) @map("granted_at") @db.Timestamptz()
+  withdrawnAt DateTime?   @map("withdrawn_at") @db.Timestamptz()
+  ipAddress   String?     @map("ip_address")
+  userAgent   String?     @map("user_agent")
 
   user User @relation(fields: [userId], references: [id])
 
@@ -405,8 +633,10 @@ model FileObject {
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz()
   deletedAt      DateTime?      @map("deleted_at") @db.Timestamptz()
 
-  uploadedBy  User?         @relation("UploadedByUser", fields: [uploadedById], references: [id])
-  testimonials Testimonial[] @relation("TestimonialPhoto")
+  uploadedBy                User?                      @relation("UploadedByUser", fields: [uploadedById], references: [id])
+  testimonials              Testimonial[]              @relation("TestimonialPhoto")
+  applicationDocuments      JobApplicationDocument[]
+  candidateProfileDocuments CandidateProfileDocument[]
 
   @@unique([bucket, objectKey])
   @@index([uploadedById])
@@ -415,17 +645,17 @@ model FileObject {
 }
 
 model Testimonial {
-  id          String        @id @default(uuid()) @db.Uuid
-  authorName  String        @map("author_name")
-  authorRole  String?       @map("author_role")
-  quote       String
-  joinedAt    DateTime?     @map("joined_at") @db.Date
-  photoId     String?       @map("photo_id") @db.Uuid
-  status      PublishStatus @default(DRAFT)
-  sortOrder   Int           @default(0) @map("sort_order")
-  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt   DateTime?     @map("deleted_at") @db.Timestamptz()
+  id         String        @id @default(uuid()) @db.Uuid
+  authorName String        @map("author_name")
+  authorRole String?       @map("author_role")
+  quote      String
+  joinedAt   DateTime?     @map("joined_at") @db.Date
+  photoId    String?       @map("photo_id") @db.Uuid
+  status     PublishStatus @default(DRAFT)
+  sortOrder  Int           @default(0) @map("sort_order")
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt  DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt  DateTime?     @map("deleted_at") @db.Timestamptz()
 
   photo FileObject? @relation("TestimonialPhoto", fields: [photoId], references: [id])
 
@@ -448,7 +678,6 @@ model UserAddress {
 
   user User @relation(fields: [userId], references: [id])
 
-  @@index([userId])
   @@index([userId, addressType])
   @@map("user_addresses")
 }

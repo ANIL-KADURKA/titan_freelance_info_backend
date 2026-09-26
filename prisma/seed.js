@@ -466,6 +466,44 @@ async function main() {
     });
   }
 
+  const resumeDocumentType = await prisma.documentType.upsert({
+    where: { key: 'resume' },
+    update: {
+      name: 'Resume',
+      description: 'Candidate resume or CV',
+      allowedMimeTypes: ['application/pdf'],
+      maxSizeBytes: 10 * 1024 * 1024,
+      sensitive: false,
+      allowCandidateReuse: true,
+      isActive: true,
+    },
+    create: {
+      key: 'resume',
+      name: 'Resume',
+      description: 'Candidate resume or CV',
+      allowedMimeTypes: ['application/pdf'],
+      maxSizeBytes: 10 * 1024 * 1024,
+      sensitive: false,
+      allowCandidateReuse: true,
+    },
+  });
+  const portfolioProfileField = await prisma.candidateProfileField.upsert({
+    where: { key: 'portfolio_url' },
+    update: {
+      label: 'Portfolio URL',
+      description: 'A link to the candidate’s portfolio or work samples.',
+      fieldType: 'URL',
+      isSensitive: false,
+      isActive: true,
+    },
+    create: {
+      key: 'portfolio_url',
+      label: 'Portfolio URL',
+      description: 'A link to the candidate’s portfolio or work samples.',
+      fieldType: 'URL',
+    },
+  });
+
   for (const job of jobs) {
     const savedJob = await prisma.job.upsert({
       where: { slug: job.slug },
@@ -562,6 +600,10 @@ async function main() {
           label,
           required,
           displayOrder,
+          profileFieldId:
+            fieldKey === 'portfolioUrl' ? portfolioProfileField.id : undefined,
+          documentTypeId:
+            fieldType === 'FILE' ? resumeDocumentType.id : undefined,
           options: options ? { choices: options } : undefined,
         }),
       ),

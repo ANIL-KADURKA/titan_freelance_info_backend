@@ -18,23 +18,12 @@ export class LoggingInterceptor implements NestInterceptor {
     const res = context.switchToHttp().getResponse<Response>();
     const start = Date.now();
     const method = req.method;
-    const url = req.originalUrl || req.url;
+    const url = (req.originalUrl || req.url).split('?')[0];
     const userId = (req as Request & { user?: { id?: string } }).user?.id;
-
-    this.logger.log(
-      `Incoming ${method} ${url}${userId ? ` | userId=${userId}` : ''}`,
-    );
+    const requestId = String(res.getHeader('x-request-id') ?? 'unknown');
 
     return next.handle().pipe(
       tap({
-        next: () => {
-          const duration = Date.now() - start;
-          this.logger.log(
-            `Completed ${method} ${url} | status=${res.statusCode} | duration=${duration}ms${
-              userId ? ` | userId=${userId}` : ''
-            }`,
-          );
-        },
         error: (error) => {
           const duration = Date.now() - start;
           const status =
@@ -43,12 +32,30 @@ export class LoggingInterceptor implements NestInterceptor {
               : res.statusCode >= 400
                 ? res.statusCode
                 : 'unknown';
-          this.logger.error(
-            `Failed ${method} ${url} | status=${status} | duration=${duration}ms${
-              userId ? ` | userId=${userId}` : ''
-            } | error=${error?.message ?? String(error)}`,
-            error?.stack,
-          );
+          const exceptionResponse =
+            error instanceof HttpException ? error.getResponse() : undefined;
+          const responseMessage =
+            typeof exceptionResponse === 'object' && exceptionResponse !== null
+              ? (exceptionResponse as { message?: unknown }).message
+              : undefined;
+          const errorMessage = Array.isArray(responseMessage)
+            ? responseMessage.join('; ')
+            : typeof responseMessage === 'string'
+              ? responseMessage
+              : (error?.message ?? String(error));
+          const logMessage = `${
+            typeof status === 'number' && status < 500
+              ? 'Request rejected'
+              : 'Handler failed'
+          } | requestId=${requestId} | ${method} ${url} | status=${status} | duration=${duration}ms${
+            userId ? ` | userId=${userId}` : ''
+          } | error=${errorMessage}`;
+
+          if (typeof status === 'number' && status < 500) {
+            this.logger.warn(logMessage);
+          } else {
+            this.logger.error(logMessage, error?.stack);
+          }
         },
       }),
     );

@@ -6,6 +6,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Min,
 } from 'class-validator';
 
@@ -61,4 +62,20 @@ export class CreateJobApplicationFieldDto {
   @IsOptional()
   options?:
     Record<string, unknown> | unknown[] | string[] | number[] | boolean[];
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Canonical reusable candidate profile field, when applicable.',
+  })
+  @IsOptional()
+  @IsUUID()
+  profileFieldId?: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Required document type for FILE fields.',
+  })
+  @IsOptional()
+  @IsUUID()
+  documentTypeId?: string;
 }
