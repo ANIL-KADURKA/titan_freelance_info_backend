@@ -6,11 +6,15 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserService } from './user.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { RolesGuard } from '../auth/roles.guard.js';
+import { Roles } from '../auth/roles.decorator.js';
+import { UserRole } from '../auth/roles.enum.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { CreateAddressDto, UpdateAddressDto } from './dto/address.dto.js';
 import { CreateEducationDto, UpdateEducationDto } from './dto/education.dto.js';
@@ -36,6 +40,64 @@ export class UserController {
   })
   getProfile(@CurrentUser() user: { id: string }) {
     return this.userService.getProfile(user.id);
+  }
+
+  @Get('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List all users for admin management' })
+  listUsersForAdmin(
+    @Query('status') status?: string,
+    @Query('role') role?: string,
+    @Query('search') search?: string,
+    @Query('includeSummary') includeSummary?: string,
+  ) {
+    return this.userService.listUsersForAdmin({
+      status,
+      role,
+      search,
+      includeSummary: includeSummary === 'true' || includeSummary === '1',
+    });
+  }
+
+  @Patch(':id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Activate or deactivate a user account' })
+  updateUserStatus(@Param('id') id: string, @Body() body: { status: string }) {
+    return this.userService.updateUserStatus(id, body.status);
+  }
+
+  @Post(':id/reset-password')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Reset a user password from the admin panel' })
+  resetUserPassword(
+    @Param('id') id: string,
+    @Body() body: { newPassword: string },
+  ) {
+    return this.userService.resetUserPassword(id, body.newPassword);
+  }
+
+  @Patch(':id/professional-email')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Update a user professional email and optional password',
+  })
+  updateUserProfessionalEmail(
+    @Param('id') id: string,
+    @Body() body: { email: string; password?: string },
+  ) {
+    return this.userService.updateUserProfessionalEmail(
+      id,
+      body.email,
+      body.password,
+    );
   }
 
   @Get('addresses')
