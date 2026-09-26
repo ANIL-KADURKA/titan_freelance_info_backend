@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Query,
+  UseFilters,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -25,10 +26,12 @@ import { UpdateJobCategoryDto } from './dto/update-job-category.dto.js';
 import { UpdateJobEligibilityRuleDto } from './dto/update-job-eligibility-rule.dto.js';
 import { UpdateJobStatusDto } from './dto/update-job-status.dto.js';
 import { UpdateJobDto } from './dto/update-job.dto.js';
+import { JobsApiExceptionFilter } from './jobs-api-exception.filter.js';
 import { JobsService } from './jobs.service.js';
 
 @ApiTags('Jobs')
 @Controller('jobs')
+@UseFilters(JobsApiExceptionFilter)
 @UseGuards(OptionalJwtAuthGuard, RolesGuard)
 export class JobsController {
   constructor(private readonly jobsService: JobsService) {}
@@ -45,8 +48,13 @@ export class JobsController {
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a job category' })
-  createCategory(@Body() dto: CreateJobCategoryDto) {
-    return this.jobsService.createCategory(dto);
+  async createCategory(@Body() dto: CreateJobCategoryDto) {
+    const data = await this.jobsService.createCategory(dto);
+    return {
+      success: true,
+      message: 'Job category created successfully.',
+      data,
+    };
   }
 
   @Get('categories/:id')
@@ -61,8 +69,16 @@ export class JobsController {
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a job category' })
-  updateCategory(@Param('id') id: string, @Body() dto: UpdateJobCategoryDto) {
-    return this.jobsService.updateCategory(id, dto);
+  async updateCategory(
+    @Param('id') id: string,
+    @Body() dto: UpdateJobCategoryDto,
+  ) {
+    const data = await this.jobsService.updateCategory(id, dto);
+    return {
+      success: true,
+      message: 'Job category updated successfully.',
+      data,
+    };
   }
 
   @Delete('categories/:id/soft-delete')
@@ -71,8 +87,9 @@ export class JobsController {
   @ApiOperation({
     summary: 'Soft delete a job category and deactivate related jobs',
   })
-  softDeleteCategory(@Param('id') id: string) {
-    return this.jobsService.softDeleteCategory(id);
+  async softDeleteCategory(@Param('id') id: string) {
+    const result = await this.jobsService.softDeleteCategory(id);
+    return { success: true, ...result };
   }
 
   @Delete('categories/:id/hard-delete')
@@ -81,16 +98,18 @@ export class JobsController {
   @ApiOperation({
     summary: 'Hard delete a job category and all associated jobs and fields',
   })
-  hardDeleteCategory(@Param('id') id: string) {
-    return this.jobsService.hardDeleteCategory(id);
+  async hardDeleteCategory(@Param('id') id: string) {
+    const result = await this.jobsService.hardDeleteCategory(id);
+    return { success: true, ...result };
   }
 
   @Delete('categories/:id')
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Soft delete a job category (alias)' })
-  deleteCategory(@Param('id') id: string) {
-    return this.jobsService.deleteCategory(id);
+  async deleteCategory(@Param('id') id: string) {
+    const result = await this.jobsService.deleteCategory(id);
+    return { success: true, ...result };
   }
 
   @Get()
@@ -120,24 +139,33 @@ export class JobsController {
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create a job' })
-  createJob(@Body() dto: CreateJobDto, @CurrentUser() user: { id?: string }) {
-    return this.jobsService.createJob(dto, user?.id);
+  async createJob(
+    @Body() dto: CreateJobDto,
+    @CurrentUser() user: { id?: string },
+  ) {
+    const data = await this.jobsService.createJob(dto, user?.id);
+    return { success: true, message: 'Job created successfully.', data };
   }
 
   @Patch(':id/status')
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update only job publishing status' })
-  updateJobStatus(@Param('id') id: string, @Body() dto: UpdateJobStatusDto) {
-    return this.jobsService.updateJobStatus(id, dto.status);
+  async updateJobStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateJobStatusDto,
+  ) {
+    const data = await this.jobsService.updateJobStatus(id, dto.status);
+    return { success: true, message: 'Job status updated successfully.', data };
   }
 
   @Patch(':id')
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a job' })
-  updateJob(@Param('id') id: string, @Body() dto: UpdateJobDto) {
-    return this.jobsService.updateJob(id, dto);
+  async updateJob(@Param('id') id: string, @Body() dto: UpdateJobDto) {
+    const data = await this.jobsService.updateJob(id, dto);
+    return { success: true, message: 'Job updated successfully.', data };
   }
 
   @Delete(':id/soft-delete')
@@ -146,24 +174,27 @@ export class JobsController {
   @ApiOperation({
     summary: 'Soft delete a job and related application/eligibility rows',
   })
-  softDeleteJob(@Param('id') id: string) {
-    return this.jobsService.softDeleteJob(id);
+  async softDeleteJob(@Param('id') id: string) {
+    const result = await this.jobsService.softDeleteJob(id);
+    return { success: true, ...result };
   }
 
   @Delete(':id/hard-delete')
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Hard delete a job and all related child rows' })
-  hardDeleteJob(@Param('id') id: string) {
-    return this.jobsService.hardDeleteJob(id);
+  async hardDeleteJob(@Param('id') id: string) {
+    const result = await this.jobsService.hardDeleteJob(id);
+    return { success: true, ...result };
   }
 
   @Delete(':id')
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Soft delete a job (alias)' })
-  deleteJob(@Param('id') id: string) {
-    return this.jobsService.deleteJob(id);
+  async deleteJob(@Param('id') id: string) {
+    const result = await this.jobsService.deleteJob(id);
+    return { success: true, ...result };
   }
 
   @Get(':jobId/application-fields')

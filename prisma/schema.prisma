@@ -14,6 +14,13 @@ enum AccountStatus {
   NOT_ELIGIBLE
 }
 
+enum RoleName {
+  ADMIN
+  RECRUITER
+  EMPLOYEE
+  CANDIDATE
+}
+
 enum AuthTokenType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
@@ -218,7 +225,7 @@ model User {
 
 model JobCategory {
   id          String   @id @default(uuid()) @db.Uuid
-  name        String
+  name        String   
   slug        String   @unique @db.VarChar(200)
   description String?
   isActive    Boolean  @default(true) @map("is_active")
@@ -315,7 +322,7 @@ model JobEligibilityRule {
 
 model Role {
   id          String           @id @default(uuid()) @db.Uuid
-  name        String           @unique
+  name        RoleName         @unique
   description String?
   isSystem    Boolean          @default(false) @map("is_system")
   createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz()

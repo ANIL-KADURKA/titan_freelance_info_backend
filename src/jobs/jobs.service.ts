@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -55,6 +56,76 @@ export class JobsService {
     return slug;
   }
 
+  private normalizeCategoryName(value: string): string {
+    return this.normalizeSlug(value, 'Job category');
+  }
+
+  private async assertCategoryNameAvailable(
+    normalizedName: string,
+    excludeId?: string,
+  ) {
+    const categories = await this.prisma.jobCategory.findMany({
+      where: excludeId ? { id: { not: excludeId } } : undefined,
+      select: { id: true, name: true },
+    });
+    const existing = categories.find(
+      (category) =>
+        this.normalizeCategoryName(category.name) === normalizedName,
+    );
+
+    if (existing) {
+      throw new ConflictException({
+        code: 'JOB_CATEGORY_NAME_EXISTS',
+        message: 'A job category with this name already exists.',
+      });
+    }
+  }
+
+  private async assertCategorySlugAvailable(slug: string, excludeId?: string) {
+    const existing = await this.prisma.jobCategory.findFirst({
+      where: { slug, ...(excludeId ? { id: { not: excludeId } } : {}) },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new ConflictException({
+        code: 'JOB_CATEGORY_SLUG_EXISTS',
+        message: 'A job category with this slug already exists.',
+      });
+    }
+  }
+
+  private async assertJobSlugAvailable(slug: string, excludeId?: string) {
+    const existing = await this.prisma.job.findFirst({
+      where: { slug, ...(excludeId ? { id: { not: excludeId } } : {}) },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new ConflictException({
+        code: 'JOB_SLUG_EXISTS',
+        message: 'A job with this slug already exists.',
+      });
+    }
+  }
+
+  private rethrowUniqueConstraint(
+    error: unknown,
+    message: string,
+    code: string,
+  ): never {
+    const prismaError =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? (error as { code?: unknown; meta?: { target?: unknown } })
+        : undefined;
+
+    if (prismaError?.code === 'P2002') {
+      throw new ConflictException({ code, message });
+    }
+
+    throw error;
+  }
+
   private async ensureCategoryExists(categoryId: string) {
     this.assertValidUuid(categoryId, 'job category');
 
@@ -107,47 +178,6 @@ export class JobsService {
     }
 
     return job;
-  }
-
-  private async generateUniqueCategorySlug(value: string, excludeId?: string) {
-    const baseSlug = this.normalizeSlug(value, 'Job category');
-    let slug = baseSlug;
-    let suffix = 2;
-
-    while (
-      await this.prisma.jobCategory.findFirst({
-        where: {
-          slug,
-          ...(excludeId ? { id: { not: excludeId } } : {}),
-        },
-      })
-    ) {
-      slug = `${baseSlug}-${suffix}`;
-      suffix += 1;
-    }
-
-    return slug;
-  }
-
-  private async generateUniqueJobSlug(value: string, excludeId?: string) {
-    const baseSlug = this.normalizeSlug(value, 'Job');
-    let slug = baseSlug;
-    let suffix = 2;
-
-    while (
-      await this.prisma.job.findFirst({
-        where: {
-          slug,
-          deletedAt: null,
-          ...(excludeId ? { id: { not: excludeId } } : {}),
-        },
-      })
-    ) {
-      slug = `${baseSlug}-${suffix}`;
-      suffix += 1;
-    }
-
-    return slug;
   }
 
   private async ensureUniqueJobFieldKey(
@@ -216,19 +246,36 @@ export class JobsService {
       throw new BadRequestException('Job category name is required');
     }
 
-    const name = dto.name.trim();
-    const slug = await this.generateUniqueCategorySlug(dto.slug ?? name);
+    const name = dto.name.trim().replace(/\s+/g, ' ');
+    const normalizedName = this.normalizeCategoryName(name);
+    await this.assertCategoryNameAvailable(normalizedName);
+
+    const slug = normalizedName;
+    if (dto.slug && this.normalizeSlug(dto.slug, 'Job category') !== slug) {
+      throw new BadRequestException(
+        'Job category slug is generated from its name; omit the slug or make it match the name.',
+      );
+    }
+    await this.assertCategorySlugAvailable(slug);
 
     this.logger.log(`Creating job category: ${name} (${slug})`);
 
-    return this.prisma.jobCategory.create({
-      data: {
-        name,
-        slug,
-        description: dto.description?.trim() || null,
-        isActive: dto.isActive ?? true,
-      },
-    });
+    try {
+      return await this.prisma.jobCategory.create({
+        data: {
+          name,
+          slug,
+          description: dto.description?.trim() || null,
+          isActive: dto.isActive ?? true,
+        },
+      });
+    } catch (error) {
+      this.rethrowUniqueConstraint(
+        error,
+        'A job category with this name or slug already exists.',
+        'JOB_CATEGORY_ALREADY_EXISTS',
+      );
+    }
   }
 
   async updateCategory(id: string, dto: UpdateJobCategoryDto) {
@@ -242,26 +289,43 @@ export class JobsService {
       throw new NotFoundException('Job category not found');
     }
 
-    const nextName = dto.name?.trim() ?? category.name;
-    const nextSlug =
-      dto.slug !== undefined || dto.name !== undefined
-        ? await this.generateUniqueCategorySlug(dto.slug ?? nextName, id)
-        : category.slug;
+    if (dto.name !== undefined && !dto.name.trim()) {
+      throw new BadRequestException('Job category name is required');
+    }
+
+    const nextName = dto.name?.trim().replace(/\s+/g, ' ') ?? category.name;
+    const normalizedName = this.normalizeCategoryName(nextName);
+    await this.assertCategoryNameAvailable(normalizedName, id);
+    const nextSlug = normalizedName;
+    if (dto.slug && this.normalizeSlug(dto.slug, 'Job category') !== nextSlug) {
+      throw new BadRequestException(
+        'Job category slug is generated from its name; omit the slug or make it match the name.',
+      );
+    }
+    await this.assertCategorySlugAvailable(nextSlug, id);
 
     this.logger.log(`Updating job category: ${id}`);
 
-    return this.prisma.jobCategory.update({
-      where: { id },
-      data: {
-        name: nextName,
-        slug: nextSlug,
-        description:
-          dto.description !== undefined
-            ? dto.description?.trim() || null
-            : category.description,
-        isActive: dto.isActive ?? category.isActive,
-      },
-    });
+    try {
+      return await this.prisma.jobCategory.update({
+        where: { id },
+        data: {
+          name: nextName,
+          slug: nextSlug,
+          description:
+            dto.description !== undefined
+              ? dto.description?.trim() || null
+              : category.description,
+          isActive: dto.isActive ?? category.isActive,
+        },
+      });
+    } catch (error) {
+      this.rethrowUniqueConstraint(
+        error,
+        'A job category with this name or slug already exists.',
+        'JOB_CATEGORY_ALREADY_EXISTS',
+      );
+    }
   }
 
   async softDeleteCategory(id: string) {
@@ -620,7 +684,8 @@ export class JobsService {
     await this.ensureUserExists(createdById);
 
     const title = dto.title.trim();
-    const slug = await this.generateUniqueJobSlug(dto.slug ?? title);
+    const slug = this.normalizeSlug(dto.slug ?? title, 'Job');
+    await this.assertJobSlugAvailable(slug);
 
     this.logger.log(`Creating job: ${title} (${slug}) for user ${createdById}`);
 
@@ -650,15 +715,23 @@ export class JobsService {
       closedAt: dto.closedAt ?? null,
     };
 
-    return this.prisma.job.create({
-      data,
-      include: {
-        category: true,
-        createdBy: {
-          select: { id: true, email: true, firstName: true, lastName: true },
+    try {
+      return await this.prisma.job.create({
+        data,
+        include: {
+          category: true,
+          createdBy: {
+            select: { id: true, email: true, firstName: true, lastName: true },
+          },
         },
-      },
-    });
+      });
+    } catch (error) {
+      this.rethrowUniqueConstraint(
+        error,
+        'A job with this slug already exists.',
+        'JOB_SLUG_EXISTS',
+      );
+    }
   }
 
   async updateJob(id: string, dto: UpdateJobDto) {
@@ -685,8 +758,9 @@ export class JobsService {
     const nextTitle = dto.title?.trim() ?? existing.title;
     const nextSlug =
       dto.slug !== undefined || dto.title !== undefined
-        ? await this.generateUniqueJobSlug(dto.slug ?? nextTitle, id)
+        ? this.normalizeSlug(dto.slug ?? nextTitle, 'Job')
         : existing.slug;
+    await this.assertJobSlugAvailable(nextSlug, id);
 
     const nextPublishedAt =
       dto.publishedAt !== undefined ? dto.publishedAt : existing.publishedAt;
@@ -742,16 +816,24 @@ export class JobsService {
 
     this.logger.log(`Updating job: ${id}`);
 
-    return this.prisma.job.update({
-      where: { id },
-      data,
-      include: {
-        category: true,
-        createdBy: {
-          select: { id: true, email: true, firstName: true, lastName: true },
+    try {
+      return await this.prisma.job.update({
+        where: { id },
+        data,
+        include: {
+          category: true,
+          createdBy: {
+            select: { id: true, email: true, firstName: true, lastName: true },
+          },
         },
-      },
-    });
+      });
+    } catch (error) {
+      this.rethrowUniqueConstraint(
+        error,
+        'A job with this slug already exists.',
+        'JOB_SLUG_EXISTS',
+      );
+    }
   }
 
   async updateJobStatus(id: string, status: JobStatus) {
