@@ -1,11 +1,42 @@
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { randomUUID } from 'node:crypto';
+import type { Request, Response } from 'express';
 import { AppModule } from './app.module.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger('Bootstrap');
+  const httpLogger = new Logger('HTTP');
+
+  app.use((req: Request, res: Response, next: () => void) => {
+    const requestId = randomUUID();
+    const method = req.method;
+    const path = (req.originalUrl || req.url).split('?')[0];
+    const startedAt = Date.now();
+
+    res.setHeader('x-request-id', requestId);
+    httpLogger.log(
+      `Request started | requestId=${requestId} | ${method} ${path}`,
+    );
+
+    res.once('finish', () => {
+      const userId = (req as Request & { user?: { id?: string } }).user?.id;
+      const status = res.statusCode;
+      const outcome = `Request finished | requestId=${requestId} | ${method} ${path} | status=${status} | duration=${Date.now() - startedAt}ms${userId ? ` | userId=${userId}` : ''}`;
+
+      if (status >= 500) {
+        httpLogger.error(outcome);
+      } else if (status >= 400) {
+        httpLogger.warn(outcome);
+      } else {
+        httpLogger.log(outcome);
+      }
+    });
+
+    next();
+  });
 
   const normalizeOrigin = (origin: string) => origin.trim().replace(/\/$/, '');
   const configuredOrigins = process.env.CORS_ORIGINS?.split(',')

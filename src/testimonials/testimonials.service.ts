@@ -6,7 +6,6 @@ import {
 import { Prisma, PublishStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AwsDocumentUploadService } from '../common/aws-document-upload.service.js';
-import { DocumentValidationService } from '../common/document-validation.service.js';
 import { CreateTestimonialDto } from './dto/create-testimonial.dto.js';
 import { UpdateTestimonialDto } from './dto/update-testimonial.dto.js';
 
@@ -22,7 +21,6 @@ export class TestimonialsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly awsDocumentUploadService: AwsDocumentUploadService,
-    private readonly documentValidationService: DocumentValidationService,
   ) {}
 
   private assertValidUuid(id: string, label: string) {
@@ -76,20 +74,8 @@ export class TestimonialsService {
     };
 
     if (file) {
-      this.documentValidationService.validate({
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
-        buffer: file.buffer,
-      });
-
       const uploadedFile = await this.awsDocumentUploadService.uploadDocument(
-        {
-          originalname: file.originalname,
-          mimetype: file.mimetype,
-          size: file.size,
-          buffer: file.buffer,
-        },
+        file,
         {
           folder: 'testimonials',
           visibility: 'PRIVATE',
@@ -132,20 +118,8 @@ export class TestimonialsService {
     };
 
     if (file) {
-      this.documentValidationService.validate({
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
-        buffer: file.buffer,
-      });
-
       const uploadedFile = await this.awsDocumentUploadService.uploadDocument(
-        {
-          originalname: file.originalname,
-          mimetype: file.mimetype,
-          size: file.size,
-          buffer: file.buffer,
-        },
+        file,
         {
           folder: 'testimonials',
           visibility: 'PRIVATE',

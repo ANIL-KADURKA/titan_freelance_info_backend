@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { ApplicationsModule } from './applications/applications.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CommonModule } from './common/common.module.js';
 import { LoggingInterceptor } from './common/logging.interceptor.js';
@@ -27,6 +28,7 @@ import { WebsiteContentModule } from './website-content/website-content.module.j
     JobsModule,
     TestimonialsModule,
     WebsiteContentModule,
+    ApplicationsModule,
   ],
   controllers: [AppController],
   providers: [

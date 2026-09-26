@@ -164,11 +164,11 @@ export class JobsService {
         },
         applicationFields: {
           where: { deletedAt: null },
-          orderBy: [{ createdAt: 'asc' }],
+          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
         },
         eligibilityRules: {
           where: { deletedAt: null },
-          orderBy: [{ createdAt: 'asc' }],
+          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
         },
       },
     });
@@ -178,6 +178,19 @@ export class JobsService {
     }
 
     return job;
+  }
+
+  private async assertJobExists(jobId: string) {
+    this.assertValidUuid(jobId, 'job');
+
+    const job = await this.prisma.job.findFirst({
+      where: { id: jobId, deletedAt: null },
+      select: { id: true },
+    });
+
+    if (!job) {
+      throw new NotFoundException('Job not found');
+    }
   }
 
   private async ensureUniqueJobFieldKey(
@@ -196,6 +209,61 @@ export class JobsService {
     if (existing) {
       throw new BadRequestException(
         'An application field with this key already exists for this job',
+      );
+    }
+  }
+
+  private async validateApplicationFieldReferences(
+    fieldType: ApplicationFieldType,
+    profileFieldId?: string | null,
+    documentTypeId?: string | null,
+  ) {
+    if (profileFieldId) {
+      this.assertValidUuid(profileFieldId, 'candidate profile field');
+      const profileField = await this.prisma.candidateProfileField.findFirst({
+        where: { id: profileFieldId, isActive: true },
+      });
+
+      if (!profileField) {
+        throw new BadRequestException(
+          'Candidate profile field not found or inactive',
+        );
+      }
+
+      if (profileField.isSensitive) {
+        throw new BadRequestException(
+          'Sensitive profile fields cannot be configured for automatic application reuse.',
+        );
+      }
+
+      if (
+        profileField.fieldType !== fieldType ||
+        fieldType === ApplicationFieldType.FILE
+      ) {
+        throw new BadRequestException(
+          'The candidate profile field type must match a non-file application field.',
+        );
+      }
+    }
+
+    if (documentTypeId) {
+      this.assertValidUuid(documentTypeId, 'document type');
+      const documentType = await this.prisma.documentType.findFirst({
+        where: { id: documentTypeId, isActive: true },
+      });
+
+      if (!documentType) {
+        throw new BadRequestException('Document type not found or inactive');
+      }
+
+      if (fieldType !== ApplicationFieldType.FILE) {
+        throw new BadRequestException(
+          'A document type can only be assigned to a FILE application field.',
+        );
+      }
+    } else if (fieldType === ApplicationFieldType.FILE) {
+      throw new BadRequestException(
+        'A document type is required for FILE application fields.',
       );
     }
   }
@@ -333,7 +401,6 @@ export class JobsService {
 
     const category = await this.prisma.jobCategory.findUnique({
       where: { id },
-      include: { jobs: true },
     });
 
     if (!category) {
@@ -382,7 +449,7 @@ export class JobsService {
 
     const category = await this.prisma.jobCategory.findUnique({
       where: { id },
-      include: { jobs: true },
+      include: { jobs: { select: { id: true } } },
     });
 
     if (!category) {
@@ -393,12 +460,6 @@ export class JobsService {
       const jobIds = category.jobs.map((job) => job.id);
 
       if (jobIds.length > 0) {
-        await tx.jobApplicationField.deleteMany({
-          where: { jobId: { in: jobIds } },
-        });
-        await tx.jobEligibilityRule.deleteMany({
-          where: { jobId: { in: jobIds } },
-        });
         await tx.job.deleteMany({ where: { id: { in: jobIds } } });
       }
 
@@ -423,10 +484,11 @@ export class JobsService {
           select: { id: true, email: true, firstName: true, lastName: true },
         },
         applicationFields: {
-          orderBy: [{ createdAt: 'asc' }],
+          where: { deletedAt: null },
+          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
         },
         eligibilityRules: {
-          orderBy: [{ createdAt: 'asc' }],
+          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
         },
       },
       orderBy: [{ createdAt: 'desc' }],
@@ -468,11 +530,11 @@ export class JobsService {
           : false,
         applicationFields: {
           where: { deletedAt: null },
-          orderBy: [{ createdAt: 'asc' }],
+          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
         },
         eligibilityRules: {
           where: { deletedAt: null },
-          orderBy: [{ createdAt: 'asc' }],
+          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
         },
       },
     });
@@ -517,11 +579,11 @@ export class JobsService {
         category: true,
         applicationFields: {
           where: { deletedAt: null },
-          orderBy: [{ createdAt: 'asc' }],
+          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
         },
         eligibilityRules: {
           where: { deletedAt: null },
-          orderBy: [{ createdAt: 'asc' }],
+          orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
         },
       },
     });
@@ -626,9 +688,19 @@ export class JobsService {
                 }
               : false,
           applicationFields:
-            scope === 'admin' ? { orderBy: [{ createdAt: 'asc' }] } : false,
+            scope === 'admin'
+              ? {
+                  where: { deletedAt: null },
+                  orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+                }
+              : false,
           eligibilityRules:
-            scope === 'admin' ? { orderBy: [{ createdAt: 'asc' }] } : false,
+            scope === 'admin'
+              ? {
+                  where: { deletedAt: null },
+                  orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+                }
+              : false,
         },
         orderBy,
         skip: (page - 1) * pageSize,
@@ -889,18 +961,13 @@ export class JobsService {
 
     const existing = await this.prisma.job.findFirst({
       where: { id },
-      include: { applicationFields: true, eligibilityRules: true },
     });
 
     if (!existing) {
       throw new NotFoundException('Job not found');
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.jobApplicationField.deleteMany({ where: { jobId: id } });
-      await tx.jobEligibilityRule.deleteMany({ where: { jobId: id } });
-      await tx.job.delete({ where: { id } });
-    });
+    await this.prisma.job.delete({ where: { id } });
 
     this.logger.log(`Hard deleted job: ${id}`);
 
@@ -965,62 +1032,25 @@ export class JobsService {
   }
 
   async findJobApplicationFields(jobId: string) {
-    await this.ensureJobExists(jobId);
+    await this.assertJobExists(jobId);
 
     return this.prisma.jobApplicationField.findMany({
-      where: { jobId },
-      orderBy: [{ createdAt: 'asc' }],
-    });
-  }
-
-  async upsertApplicationFieldForJob(
-    jobId: string,
-    dto: CreateJobApplicationFieldDto,
-  ) {
-    await this.ensureJobExists(jobId);
-
-    const fieldKey = dto.fieldKey.trim();
-    if (!fieldKey) {
-      throw new BadRequestException('Application field key is required');
-    }
-
-    const existing = await this.prisma.jobApplicationField.findFirst({
-      where: { jobId, fieldKey },
-    });
-
-    if (existing) {
-      return this.prisma.jobApplicationField.update({
-        where: { id: existing.id },
-        data: {
-          fieldType: dto.fieldType ?? existing.fieldType,
-          label: dto.label?.trim() ?? existing.label,
-          description:
-            dto.description !== undefined
-              ? dto.description?.trim() || null
-              : existing.description,
-          required: dto.required ?? existing.required,
-          options:
-            dto.options === undefined
-              ? (existing.options ?? Prisma.JsonNull)
-              : ((dto.options as Prisma.InputJsonValue) ?? Prisma.JsonNull),
+      where: { jobId, deletedAt: null },
+      include: {
+        profileField: {
+          select: { id: true, key: true, label: true, fieldType: true },
         },
-      });
-    }
-
-    await this.ensureUniqueJobFieldKey(jobId, fieldKey);
-
-    this.logger.log(`Creating application field ${fieldKey} for job ${jobId}`);
-
-    return this.prisma.jobApplicationField.create({
-      data: {
-        jobId,
-        fieldKey,
-        fieldType: dto.fieldType ?? ApplicationFieldType.TEXT,
-        label: dto.label.trim(),
-        description: dto.description?.trim() || null,
-        required: dto.required ?? false,
-        options: (dto.options as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+        documentType: {
+          select: {
+            id: true,
+            key: true,
+            name: true,
+            sensitive: true,
+            allowCandidateReuse: true,
+          },
+        },
       },
+      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
     });
   }
 
@@ -1028,7 +1058,7 @@ export class JobsService {
     jobId: string,
     dto: CreateJobApplicationFieldDto,
   ) {
-    await this.ensureJobExists(jobId);
+    await this.assertJobExists(jobId);
 
     const fieldKey = dto.fieldKey.trim();
     if (!fieldKey) {
@@ -1036,6 +1066,12 @@ export class JobsService {
     }
 
     await this.ensureUniqueJobFieldKey(jobId, fieldKey);
+
+    await this.validateApplicationFieldReferences(
+      dto.fieldType,
+      dto.profileFieldId,
+      dto.documentTypeId,
+    );
 
     return this.prisma.jobApplicationField.create({
       data: {
@@ -1045,6 +1081,9 @@ export class JobsService {
         label: dto.label.trim(),
         description: dto.description?.trim() || null,
         required: dto.required ?? false,
+        displayOrder: dto.displayOrder ?? 0,
+        profileFieldId: dto.profileFieldId,
+        documentTypeId: dto.documentTypeId,
         options: (dto.options as Prisma.InputJsonValue) ?? Prisma.JsonNull,
       },
     });
@@ -1059,7 +1098,7 @@ export class JobsService {
     this.assertValidUuid(fieldId, 'application field');
 
     const field = await this.prisma.jobApplicationField.findFirst({
-      where: { id: fieldId, jobId },
+      where: { id: fieldId, jobId, deletedAt: null },
     });
 
     if (!field) {
@@ -1071,17 +1110,35 @@ export class JobsService {
       await this.ensureUniqueJobFieldKey(jobId, nextFieldKey, fieldId);
     }
 
+    const nextFieldType = dto.fieldType ?? field.fieldType;
+    const nextProfileFieldId =
+      dto.profileFieldId !== undefined
+        ? dto.profileFieldId
+        : field.profileFieldId;
+    const nextDocumentTypeId =
+      dto.documentTypeId !== undefined
+        ? dto.documentTypeId
+        : field.documentTypeId;
+    await this.validateApplicationFieldReferences(
+      nextFieldType,
+      nextProfileFieldId,
+      nextDocumentTypeId,
+    );
+
     return this.prisma.jobApplicationField.update({
       where: { id: fieldId },
       data: {
         fieldKey: nextFieldKey,
-        fieldType: dto.fieldType ?? field.fieldType,
+        fieldType: nextFieldType,
         label: dto.label?.trim() ?? field.label,
         description:
           dto.description !== undefined
             ? dto.description?.trim() || null
             : field.description,
         required: dto.required ?? field.required,
+        displayOrder: dto.displayOrder ?? field.displayOrder,
+        profileFieldId: nextProfileFieldId,
+        documentTypeId: nextDocumentTypeId,
         options:
           dto.options === undefined
             ? (field.options ?? Prisma.JsonNull)
@@ -1095,24 +1152,27 @@ export class JobsService {
     this.assertValidUuid(fieldId, 'application field');
 
     const field = await this.prisma.jobApplicationField.findFirst({
-      where: { id: fieldId, jobId },
+      where: { id: fieldId, jobId, deletedAt: null },
     });
 
     if (!field) {
       throw new NotFoundException('Application field not found');
     }
 
-    await this.prisma.jobApplicationField.delete({ where: { id: fieldId } });
+    await this.prisma.jobApplicationField.update({
+      where: { id: fieldId },
+      data: { deletedAt: new Date() },
+    });
 
-    return { message: 'Application field deleted successfully' };
+    return { message: 'Application field removed successfully' };
   }
 
   async findJobEligibilityRules(jobId: string) {
-    await this.ensureJobExists(jobId);
+    await this.assertJobExists(jobId);
 
     return this.prisma.jobEligibilityRule.findMany({
-      where: { jobId },
-      orderBy: [{ createdAt: 'asc' }],
+      where: { jobId, deletedAt: null },
+      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
     });
   }
 
@@ -1120,7 +1180,7 @@ export class JobsService {
     jobId: string,
     dto: CreateJobEligibilityRuleDto,
   ) {
-    await this.ensureJobExists(jobId);
+    await this.assertJobExists(jobId);
 
     if (!dto.fieldKey?.trim()) {
       throw new BadRequestException('Eligibility field key is required');
@@ -1140,6 +1200,7 @@ export class JobsService {
         fieldType: dto.fieldType,
         operator: dto.operator,
         value: dto.value as Prisma.InputJsonValue,
+        displayOrder: dto.displayOrder ?? 0,
       },
     });
   }
@@ -1176,6 +1237,7 @@ export class JobsService {
         fieldType: dto.fieldType ?? rule.fieldType,
         operator: dto.operator ?? rule.operator,
         value: (dto.value ?? rule.value) as Prisma.InputJsonValue,
+        displayOrder: dto.displayOrder ?? rule.displayOrder,
       },
     });
   }
