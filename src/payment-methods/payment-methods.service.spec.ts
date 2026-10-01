@@ -3,6 +3,7 @@ import type { ConfigService } from '@nestjs/config';
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import { PaymentDataCipher } from './payment-data-cipher.js';
+import type { NotificationsService } from '../notifications/notifications.service.js';
 import { PaymentMethodsService } from './payment-methods.service.js';
 
 const key = Buffer.alloc(32, 7).toString('base64');
@@ -27,8 +28,19 @@ function createService(existing: Array<{ fingerprint: string }> = []) {
     }),
   );
   const update = vi.fn(({ data }) =>
-    Promise.resolve({ id: 'pm-1', createdAt: new Date(), ...data }),
+    Promise.resolve({
+      id: 'pm-1',
+      userId: 'user-1',
+      type: 'BANK',
+      accountNumberLast4: '9012',
+      createdAt: new Date(),
+      ...data,
+    }),
   );
+  const notifications = {
+    notifyUser: vi.fn().mockResolvedValue(undefined),
+    notifyAdmins: vi.fn().mockResolvedValue(undefined),
+  };
   const prisma = {
     userPaymentMethod: {
       findMany: vi.fn().mockResolvedValue(existing),
@@ -36,8 +48,22 @@ function createService(existing: Array<{ fingerprint: string }> = []) {
       create,
       update,
     },
+    user: {
+      findUnique: vi
+        .fn()
+        .mockResolvedValue({ email: 'u@test.com', firstName: 'Usha' }),
+    },
   } as unknown as PrismaService;
-  return { service: new PaymentMethodsService(prisma, cipher), create, update };
+  return {
+    service: new PaymentMethodsService(
+      prisma,
+      cipher,
+      notifications as unknown as NotificationsService,
+    ),
+    create,
+    update,
+    notifications,
+  };
 }
 
 describe('PaymentDataCipher', () => {
@@ -79,7 +105,7 @@ describe('PaymentMethodsService', () => {
   });
 
   it('records the reviewer and rejection reason', async () => {
-    const { service, update } = createService();
+    const { service, update, notifications } = createService();
     await service.review('admin-1', 'pm-1', {
       decision: 'REJECTED',
       reason: 'Name does not match',
@@ -89,5 +115,14 @@ describe('PaymentMethodsService', () => {
       rejectionReason: 'Name does not match',
       reviewedById: 'admin-1',
     });
+    // The candidate is told why.
+    expect(notifications.notifyUser).toHaveBeenCalledWith(
+      'user-1',
+      expect.objectContaining({
+        type: 'PAYMENT_METHOD_REVIEWED',
+        title: 'Payout method rejected',
+        message: expect.stringContaining('Name does not match'),
+      }),
+    );
   });
 });

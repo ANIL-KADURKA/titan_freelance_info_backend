@@ -8,10 +8,13 @@ import {
 import {
   ApplicationFieldType,
   JobStatus,
+  PayCurrency,
+  PayUnit,
   Prisma,
   WorkMode,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { JobResourcesService } from './job-resources.service.js';
 import { UserRole } from '../auth/roles.enum.js';
 import { CreateJobApplicationFieldDto } from './dto/create-job-application-field.dto.js';
 import { UpdateJobApplicationFieldDto } from './dto/update-job-application-field.dto.js';
@@ -29,7 +32,80 @@ type JobSearchScope = 'admin' | 'public';
 export class JobsService {
   private readonly logger = new Logger(JobsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jobResourcesService: JobResourcesService,
+  ) {}
+
+  /**
+   * Validates new application fields up front (keys unique in the payload
+   * and against `existingKeys`, references valid) and maps them to rows.
+   */
+  private async prepareApplicationFields(
+    fields: CreateJobApplicationFieldDto[],
+    existingKeys: string[] = [],
+  ): Promise<Prisma.JobApplicationFieldUncheckedCreateWithoutJobInput[]> {
+    const seen = new Set(existingKeys);
+    const rows: Prisma.JobApplicationFieldUncheckedCreateWithoutJobInput[] = [];
+    for (const [index, field] of fields.entries()) {
+      const fieldKey = field.fieldKey.trim();
+      if (!fieldKey) {
+        throw new BadRequestException('Application field key is required');
+      }
+      if (seen.has(fieldKey)) {
+        throw new BadRequestException(
+          `Application field key "${fieldKey}" is used more than once.`,
+        );
+      }
+      seen.add(fieldKey);
+      await this.validateApplicationFieldReferences(
+        field.fieldType,
+        field.profileFieldId,
+        field.documentTypeId,
+      );
+      rows.push({
+        fieldKey,
+        fieldType: field.fieldType,
+        label: field.label.trim(),
+        description: field.description?.trim() || null,
+        required: field.required ?? false,
+        displayOrder: field.displayOrder ?? existingKeys.length + index,
+        profileFieldId: field.profileFieldId,
+        documentTypeId: field.documentTypeId,
+        options: (field.options as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+      });
+    }
+    return rows;
+  }
+
+  private prepareEligibilityRules(
+    rules: CreateJobEligibilityRuleDto[],
+    existingKeys: string[] = [],
+  ): Prisma.JobEligibilityRuleUncheckedCreateWithoutJobInput[] {
+    const seen = new Set(existingKeys);
+    return rules.map((rule, index) => {
+      const fieldKey = rule.fieldKey?.trim();
+      if (!fieldKey) {
+        throw new BadRequestException('Eligibility field key is required');
+      }
+      if (rule.value === undefined || rule.value === null) {
+        throw new BadRequestException('Eligibility value is required');
+      }
+      if (seen.has(fieldKey)) {
+        throw new BadRequestException(
+          `Eligibility rule key "${fieldKey}" is used more than once.`,
+        );
+      }
+      seen.add(fieldKey);
+      return {
+        fieldKey,
+        fieldType: rule.fieldType,
+        operator: rule.operator,
+        value: rule.value as Prisma.InputJsonValue,
+        displayOrder: rule.displayOrder ?? existingKeys.length + index,
+      };
+    });
+  }
 
   private assertValidUuid(id: string, label: string) {
     const uuidPattern =
@@ -165,6 +241,18 @@ export class JobsService {
         applicationFields: {
           where: { deletedAt: null },
           orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+          // File fields: the apply page shows the allowed types and size.
+          include: {
+            documentType: {
+              select: {
+                id: true,
+                key: true,
+                name: true,
+                allowedMimeTypes: true,
+                maxSizeBytes: true,
+              },
+            },
+          },
         },
         eligibilityRules: {
           where: { deletedAt: null },
@@ -486,6 +574,18 @@ export class JobsService {
         applicationFields: {
           where: { deletedAt: null },
           orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+          // File fields: the apply page shows the allowed types and size.
+          include: {
+            documentType: {
+              select: {
+                id: true,
+                key: true,
+                name: true,
+                allowedMimeTypes: true,
+                maxSizeBytes: true,
+              },
+            },
+          },
         },
         eligibilityRules: {
           orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
@@ -531,6 +631,18 @@ export class JobsService {
         applicationFields: {
           where: { deletedAt: null },
           orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+          // File fields: the apply page shows the allowed types and size.
+          include: {
+            documentType: {
+              select: {
+                id: true,
+                key: true,
+                name: true,
+                allowedMimeTypes: true,
+                maxSizeBytes: true,
+              },
+            },
+          },
         },
         eligibilityRules: {
           where: { deletedAt: null },
@@ -580,6 +692,18 @@ export class JobsService {
         applicationFields: {
           where: { deletedAt: null },
           orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+          // File fields: the apply page shows the allowed types and size.
+          include: {
+            documentType: {
+              select: {
+                id: true,
+                key: true,
+                name: true,
+                allowedMimeTypes: true,
+                maxSizeBytes: true,
+              },
+            },
+          },
         },
         eligibilityRules: {
           where: { deletedAt: null },
@@ -701,6 +825,15 @@ export class JobsService {
                   orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
                 }
               : false,
+          // Admin jobs table shows how many people applied.
+          _count:
+            scope === 'admin'
+              ? {
+                  select: {
+                    applications: { where: { deletedAt: null } },
+                  },
+                }
+              : false,
         },
         orderBy,
         skip: (page - 1) * pageSize,
@@ -731,7 +864,30 @@ export class JobsService {
     };
   }
 
+  /**
+   * Creates the job with its application fields, eligibility rules and
+   * resources in one transaction. If anything fails nothing is saved, and the
+   * files staged in S3 for it are deleted.
+   */
   async createJob(dto: CreateJobDto, currentUserId?: string) {
+    const ownerId = dto.createdById ?? currentUserId;
+    try {
+      return await this.createJobWithChildren(dto, currentUserId);
+    } catch (error) {
+      if (ownerId && dto.resources?.length) {
+        await this.jobResourcesService.discardDraftUploads(
+          ownerId,
+          dto.resources,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async createJobWithChildren(
+    dto: CreateJobDto,
+    currentUserId?: string,
+  ) {
     if (!dto.title?.trim()) {
       throw new BadRequestException('Job title is required');
     }
@@ -774,6 +930,7 @@ export class JobsService {
       workMode: dto.workMode ?? WorkMode.REMOTE,
       duration: dto.duration?.trim() || null,
       openings: dto.openings ?? null,
+      ...this.toPayFields(dto.payAmount, dto.payCurrency, dto.payUnit),
       applicationInstructions: dto.applicationInstructions ?? [],
       workInstructions: dto.workInstructions ?? [],
       additionalInfo:
@@ -787,16 +944,49 @@ export class JobsService {
       closedAt: dto.closedAt ?? null,
     };
 
+    // Validate everything before writing anything.
+    const applicationFields = await this.prepareApplicationFields(
+      dto.applicationFields ?? [],
+    );
+    const eligibilityRules = this.prepareEligibilityRules(
+      dto.eligibilityRules ?? [],
+    );
+    const resources = await this.jobResourcesService.prepareDraftResources(
+      createdById,
+      dto.resources ?? [],
+    );
+
     try {
-      return await this.prisma.job.create({
-        data,
-        include: {
-          category: true,
-          createdBy: {
-            select: { id: true, email: true, firstName: true, lastName: true },
-          },
+      return await this.prisma.$transaction(
+        async (tx) => {
+          const job = await tx.job.create({
+            data: {
+              ...data,
+              applicationFields: { create: applicationFields },
+              eligibilityRules: { create: eligibilityRules },
+            },
+            include: {
+              category: true,
+              createdBy: {
+                select: {
+                  id: true,
+                  email: true,
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+            },
+          });
+          await this.jobResourcesService.persistPreparedResources(
+            tx,
+            job.id,
+            createdById,
+            resources,
+          );
+          return job;
         },
-      });
+        { timeout: 30_000 },
+      );
     } catch (error) {
       this.rethrowUniqueConstraint(
         error,
@@ -866,6 +1056,11 @@ export class JobsService {
           ? dto.duration?.trim() || null
           : existing.duration,
       openings: dto.openings ?? existing.openings,
+      // Pay is set as a unit: an amount always comes with currency and unit,
+      // and sending payAmount: null clears all three.
+      ...(dto.payAmount !== undefined
+        ? this.toPayFields(dto.payAmount, dto.payCurrency, dto.payUnit)
+        : {}),
       applicationInstructions:
         dto.applicationInstructions ?? existing.applicationInstructions,
       workInstructions: dto.workInstructions ?? existing.workInstructions,
@@ -886,12 +1081,44 @@ export class JobsService {
       closedAt: nextClosedAt,
     };
 
+    // New fields/rules are added in the same write, so it's all or nothing.
+    const [existingFields, existingRules] = await Promise.all([
+      dto.applicationFields?.length
+        ? this.prisma.jobApplicationField.findMany({
+            where: { jobId: id },
+            select: { fieldKey: true },
+          })
+        : [],
+      dto.eligibilityRules?.length
+        ? this.prisma.jobEligibilityRule.findMany({
+            where: { jobId: id },
+            select: { fieldKey: true },
+          })
+        : [],
+    ]);
+    const newFields = await this.prepareApplicationFields(
+      dto.applicationFields ?? [],
+      existingFields.map((field) => field.fieldKey),
+    );
+    const newRules = this.prepareEligibilityRules(
+      dto.eligibilityRules ?? [],
+      existingRules.map((rule) => rule.fieldKey),
+    );
+
     this.logger.log(`Updating job: ${id}`);
 
     try {
       return await this.prisma.job.update({
         where: { id },
-        data,
+        data: {
+          ...data,
+          ...(newFields.length
+            ? { applicationFields: { create: newFields } }
+            : {}),
+          ...(newRules.length
+            ? { eligibilityRules: { create: newRules } }
+            : {}),
+        },
         include: {
           category: true,
           createdBy: {
@@ -983,6 +1210,22 @@ export class JobsService {
       .split(',')
       .map((entry) => entry.trim())
       .filter(Boolean);
+  }
+
+  private toPayFields(
+    payAmount: number | null | undefined,
+    payCurrency: PayCurrency | undefined,
+    payUnit: PayUnit | undefined,
+  ) {
+    if (payAmount == null) {
+      return { payAmount: null, payCurrency: null, payUnit: null };
+    }
+    if (!payCurrency || !payUnit) {
+      throw new BadRequestException(
+        'Pay currency and unit are required when a pay amount is set',
+      );
+    }
+    return { payAmount: new Prisma.Decimal(payAmount), payCurrency, payUnit };
   }
 
   private isUuid(value: string) {

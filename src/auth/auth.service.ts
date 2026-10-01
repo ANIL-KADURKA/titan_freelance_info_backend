@@ -31,6 +31,8 @@ import {
   passwordResetEmail,
   signupVerificationEmail,
 } from './email-templates.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { passwordChanged } from '../notifications/notification-messages.js';
 
 export type AuthTokens = {
   accessToken: string;
@@ -72,6 +74,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -449,6 +452,7 @@ export class AuthService {
     await this.setPasswordAndSignOutEverywhere(user.id, dto.newPassword);
 
     this.logger.log(`Password reset successful for user ${user.id}`);
+    await this.notifications.notifyUser(user.id, passwordChanged(true));
     return { message: 'Password reset successful. Please sign in.' };
   }
 
@@ -480,6 +484,7 @@ export class AuthService {
 
     await this.setPasswordAndSignOutEverywhere(userId, dto.newPassword);
     this.logger.log(`Password changed for user ${userId}`);
+    await this.notifications.notifyUser(userId, passwordChanged(false));
 
     // Every other device is now signed out; keep this one signed in.
     return {

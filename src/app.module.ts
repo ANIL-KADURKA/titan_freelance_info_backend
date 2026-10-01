@@ -3,6 +3,9 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { DashboardModule } from './dashboard/dashboard.module.js';
+import { TimesheetsModule } from './timesheets/timesheets.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
 import { ApplicationsModule } from './applications/applications.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CommonModule } from './common/common.module.js';
@@ -33,6 +36,9 @@ import { WebsiteContentModule } from './website-content/website-content.module.j
     TestimonialsModule,
     WebsiteContentModule,
     ApplicationsModule,
+    NotificationsModule,
+    TimesheetsModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [

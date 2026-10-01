@@ -10,6 +10,12 @@ import { AuthService, getOnboardingStep } from '../auth/auth.service.js';
 import { normalizePhone } from '../common/phone.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { SaveOnboardingProfileDto } from './dto/onboarding.dto.js';
+import {
+  candidateJoined,
+  personName,
+  welcome,
+} from '../notifications/notification-messages.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 // Bump when the trainer agreement text changes so users re-accept it.
 export const TRAINER_AGREEMENT_VERSION = '2026-10-01';
@@ -26,6 +32,7 @@ export class OnboardingService {
     private readonly prisma: PrismaService,
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async getState(userId: string) {
@@ -217,6 +224,21 @@ export class OnboardingService {
       where: { id: userId },
       data: { onboardingCompletedAt: user.onboardingCompletedAt ?? new Date() },
     });
+
+    // First completion only: welcome the candidate and tell the admins.
+    if (!user.onboardingCompletedAt) {
+      await Promise.all([
+        this.notifications.notifyUser(userId, welcome(user.firstName)),
+        this.notifications.notifyAdmins(
+          candidateJoined(
+            personName({
+              firstName: user.legalName ?? user.firstName,
+              email: user.email,
+            }),
+          ),
+        ),
+      ]);
+    }
 
     return this.getState(userId);
   }

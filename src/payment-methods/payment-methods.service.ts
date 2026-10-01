@@ -12,7 +12,20 @@ import {
   ListPaymentMethodsQueryDto,
   ReviewPaymentMethodDto,
 } from './dto/payment-method.dto.js';
+import {
+  paymentMethodReviewed,
+  paymentMethodSubmitted,
+  personName,
+} from '../notifications/notification-messages.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { PaymentDataCipher } from './payment-data-cipher.js';
+
+/** "UPI ID name@bank" / "bank account ending 1234" — for notifications. */
+function describeMethod(method: UserPaymentMethod) {
+  return method.type === 'UPI'
+    ? `UPI ID ${method.upiId ?? ''}`.trim()
+    : `bank account ending ${method.accountNumberLast4 ?? '••••'}`;
+}
 
 const MAX_ACTIVE_METHODS = 10;
 
@@ -30,6 +43,7 @@ export class PaymentMethodsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cipher: PaymentDataCipher,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async listMine(userId: string) {
@@ -86,6 +100,15 @@ export class PaymentMethodsService {
     });
 
     this.logger.log(`Payment method ${method.id} added by user ${userId}`);
+    const owner = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, firstName: true, lastName: true },
+    });
+    if (owner) {
+      await this.notifications.notifyAdmins(
+        paymentMethodSubmitted(personName(owner), describeMethod(method)),
+      );
+    }
     return this.toCandidateView(method);
   }
 
@@ -171,6 +194,14 @@ export class PaymentMethodsService {
 
     this.logger.log(
       `Payment method ${id} marked ${dto.decision} by reviewer ${reviewerId}`,
+    );
+    await this.notifications.notifyUser(
+      updated.userId,
+      paymentMethodReviewed(
+        describeMethod(updated),
+        dto.decision === 'VERIFIED',
+        updated.rejectionReason,
+      ),
     );
     return {
       message:

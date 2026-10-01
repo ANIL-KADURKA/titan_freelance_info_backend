@@ -6,7 +6,7 @@
 
 export type EmailContent = { subject: string; text: string; html: string };
 
-const colors = {
+export const colors = {
   page: '#0b0d24',
   card: '#151735',
   border: '#2a2d57',
@@ -16,10 +16,10 @@ const colors = {
   codeBg: '#1d2046',
 };
 
-const fontStack =
+export const fontStack =
   "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif";
 
-function escapeHtml(value: string) {
+export function escapeHtml(value: string) {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -102,7 +102,7 @@ function layout({
 </html>`;
 }
 
-function greetingFor(name?: string | null) {
+export function greetingFor(name?: string | null) {
   const first = name?.trim().split(/\s+/)[0];
   return first ? `Hi ${first},` : 'Hi there,';
 }

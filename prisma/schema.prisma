@@ -61,6 +61,38 @@ enum FileVisibility {
   PUBLIC
 }
 
+enum JobResourceType {
+  PDF
+  VIDEO
+  IMAGE
+  AUDIO
+  DOCUMENT
+  YOUTUBE
+  LINK
+}
+
+enum NotificationType {
+  APPLICATION_SUBMITTED
+  APPLICATION_STATUS
+  APPLICATION_SELECTED
+  APPLICATION_RECEIVED
+  APPLICATION_WITHDRAWN
+  PAYMENT_METHOD_SUBMITTED
+  PAYMENT_METHOD_REVIEWED
+  ACCOUNT_SECURITY
+  WELCOME
+  CANDIDATE_JOINED
+  TIMESHEET_SUBMITTED
+  TIMESHEET_REVIEWED
+  PAYOUT_SENT
+}
+
+enum TimesheetStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
 enum FileScanStatus {
   PENDING
   CLEAN
@@ -85,6 +117,20 @@ enum WorkMode {
   REMOTE
   HYBRID
   ONSITE
+}
+
+enum PayCurrency {
+  INR
+  USD
+}
+
+enum PayUnit {
+  HOUR
+  DAY
+  WEEK
+  MONTH
+  TASK
+  PROJECT
 }
 
 enum JobStatus {
@@ -135,6 +181,7 @@ enum ApplicationStatus {
   INTERVIEW
   OFFERED
   HIRED
+  COMPLETED
   REJECTED
   WITHDRAWN
 }
@@ -245,11 +292,17 @@ model User {
   applications                 CandidateApplication[]     @relation("CandidateApplications")
   assignedApplications         CandidateApplication[]     @relation("AssignedApplications")
   applicationStatusChanges     ApplicationStatusHistory[] @relation("ApplicationStatusChangedBy")
+  workAccountsSent             ApplicationWorkAccount[]   @relation("WorkAccountsSent")
+  notifications                Notification[]
   verifiedApplicationDocuments JobApplicationDocument[]   @relation("DocumentVerifiedBy")
   candidateProfileValues       CandidateProfileValue[]
   candidateProfileDocuments    CandidateProfileDocument[]
   paymentMethods               UserPaymentMethod[]        @relation("UserPaymentMethods")
   reviewedPaymentMethods       UserPaymentMethod[]        @relation("ReviewedPaymentMethods")
+  timesheetEntries             TimesheetEntry[]           @relation("TimesheetEntries")
+  timesheetsReviewed           TimesheetEntry[]           @relation("TimesheetsReviewed")
+  payoutsReceived              Payout[]                   @relation("PayoutsReceived")
+  payoutsSent                  Payout[]                   @relation("PayoutsSent")
 
   @@index([status])
   @@map("users")
@@ -272,36 +325,41 @@ model JobCategory {
 }
 
 model Job {
-  id                      String    @id @default(uuid()) @db.Uuid
-  slug                    String    @unique @db.VarChar(200)
+  id                      String       @id @default(uuid()) @db.Uuid
+  slug                    String       @unique @db.VarChar(200)
   title                   String
-  categoryId              String    @map("category_id") @db.Uuid
-  createdById             String    @map("created_by_id") @db.Uuid
+  categoryId              String       @map("category_id") @db.Uuid
+  createdById             String       @map("created_by_id") @db.Uuid
   summary                 String?
   description             String
-  skills                  String[]  @default([])
-  requirements            String[]  @default([])
+  skills                  String[]     @default([])
+  requirements            String[]     @default([])
   location                String?
-  workMode                WorkMode  @default(REMOTE) @map("work_mode")
+  workMode                WorkMode     @default(REMOTE) @map("work_mode")
   duration                String?
   openings                Int?
-  applicationInstructions String[]  @default([]) @map("application_instructions")
-  workInstructions        String[]  @default([]) @map("work_instructions")
-  additionalInfo          Json?     @map("additional_info")
-  coverImageId            String?   @map("cover_image_id") @db.Uuid
-  status                  JobStatus @default(DRAFT)
-  publishedAt             DateTime? @map("published_at") @db.Timestamptz()
-  applicationDeadline     DateTime? @map("application_deadline") @db.Timestamptz()
-  closedAt                DateTime? @map("closed_at") @db.Timestamptz()
-  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt               DateTime? @map("deleted_at") @db.Timestamptz()
+  payAmount               Decimal?     @map("pay_amount") @db.Decimal(12, 2)
+  payCurrency             PayCurrency? @map("pay_currency")
+  payUnit                 PayUnit?     @map("pay_unit")
+  applicationInstructions String[]     @default([]) @map("application_instructions")
+  workInstructions        String[]     @default([]) @map("work_instructions")
+  additionalInfo          Json?        @map("additional_info")
+  coverImageId            String?      @map("cover_image_id") @db.Uuid
+  status                  JobStatus    @default(DRAFT)
+  publishedAt             DateTime?    @map("published_at") @db.Timestamptz()
+  applicationDeadline     DateTime?    @map("application_deadline") @db.Timestamptz()
+  closedAt                DateTime?    @map("closed_at") @db.Timestamptz()
+  createdAt               DateTime     @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt               DateTime     @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt               DateTime?    @map("deleted_at") @db.Timestamptz()
 
   category          JobCategory            @relation(fields: [categoryId], references: [id])
   createdBy         User                   @relation("CreatedJobs", fields: [createdById], references: [id])
   applicationFields JobApplicationField[]
   eligibilityRules  JobEligibilityRule[]
   applications      CandidateApplication[]
+  resources         JobResource[]
+  timesheetEntries  TimesheetEntry[]
 
   @@index([status, publishedAt])
   @@index([categoryId])
@@ -340,29 +398,33 @@ model JobApplicationField {
 }
 
 model CandidateApplication {
-  id              String            @id @default(uuid()) @db.Uuid
-  applicationNo   String            @unique @map("application_no") @db.VarChar(30)
-  userId          String            @map("user_id") @db.Uuid
-  jobId           String            @map("job_id") @db.Uuid
-  status          ApplicationStatus @default(APPLIED)
-  statusChangedAt DateTime          @default(now()) @map("status_changed_at") @db.Timestamptz()
-  coverNote       String?           @map("cover_note")
-  rejectionReason String?           @map("rejection_reason")
-  withdrawnReason String?           @map("withdrawn_reason")
-  assignedToId    String?           @map("assigned_to_id") @db.Uuid
-  source          String?
-  appliedAt       DateTime          @default(now()) @map("applied_at") @db.Timestamptz()
-  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz()
+  id                 String            @id @default(uuid()) @db.Uuid
+  applicationNo      String            @unique @map("application_no") @db.VarChar(30)
+  userId             String            @map("user_id") @db.Uuid
+  jobId              String            @map("job_id") @db.Uuid
+  status             ApplicationStatus @default(APPLIED)
+  statusChangedAt    DateTime          @default(now()) @map("status_changed_at") @db.Timestamptz()
+  coverNote          String?           @map("cover_note")
+  /// Snapshot of the candidate's eligibility answers and the rule results.
+  eligibilityAnswers Json?             @map("eligibility_answers")
+  rejectionReason    String?           @map("rejection_reason")
+  withdrawnReason    String?           @map("withdrawn_reason")
+  assignedToId       String?           @map("assigned_to_id") @db.Uuid
+  source             String?
+  appliedAt          DateTime          @default(now()) @map("applied_at") @db.Timestamptz()
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt          DateTime?         @map("deleted_at") @db.Timestamptz()
 
   candidate  User  @relation("CandidateApplications", fields: [userId], references: [id])
   job        Job   @relation(fields: [jobId], references: [id])
   assignedTo User? @relation("AssignedApplications", fields: [assignedToId], references: [id], onDelete: SetNull)
 
-  statusHistory ApplicationStatusHistory[]
-  documents     JobApplicationDocument[]
-  fieldValues   JobApplicationFieldValue[]
+  statusHistory    ApplicationStatusHistory[]
+  documents        JobApplicationDocument[]
+  workAccount      ApplicationWorkAccount?
+  fieldValues      JobApplicationFieldValue[]
+  timesheetEntries TimesheetEntry[]
 
   @@unique([userId, jobId])
   @@index([jobId, status])
@@ -370,6 +432,111 @@ model CandidateApplication {
   @@index([assignedToId])
   @@index([deletedAt])
   @@map("applications")
+}
+
+/// Work account emailed to a selected candidate. The password is encrypted
+/// (AES-256-GCM, PAYMENT_DATA_KEY) and only decrypted for the owner or staff.
+model ApplicationWorkAccount {
+  id                String   @id @default(uuid()) @db.Uuid
+  applicationId     String   @unique @map("application_id") @db.Uuid
+  workEmail         String   @map("work_email") @db.VarChar(254)
+  passwordEncrypted String   @map("password_encrypted")
+  instructions      String?
+  sentAt            DateTime @default(now()) @map("sent_at") @db.Timestamptz()
+  sentById          String?  @map("sent_by_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  application CandidateApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  sentBy      User?                @relation("WorkAccountsSent", fields: [sentById], references: [id], onDelete: SetNull)
+
+  @@map("application_work_accounts")
+}
+
+/// One day of work on a project. Rate, currency and unit are copied from the
+/// job when submitted, so later pay changes don't alter history. Approved and
+/// unpaid (payoutId null) entries make up the candidate's pending payment.
+model TimesheetEntry {
+  id              String          @id @default(uuid()) @db.Uuid
+  applicationId   String          @map("application_id") @db.Uuid
+  userId          String          @map("user_id") @db.Uuid
+  jobId           String          @map("job_id") @db.Uuid
+  workDate        DateTime        @map("work_date") @db.Date
+  quantity        Decimal         @db.Decimal(8, 2)
+  rate            Decimal         @db.Decimal(12, 2)
+  currency        PayCurrency
+  unit            PayUnit
+  amount          Decimal         @db.Decimal(14, 2)
+  note            String
+  status          TimesheetStatus @default(SUBMITTED)
+  rejectionReason String?         @map("rejection_reason")
+  reviewedById    String?         @map("reviewed_by_id") @db.Uuid
+  reviewedAt      DateTime?       @map("reviewed_at") @db.Timestamptz()
+  payoutId        String?         @map("payout_id") @db.Uuid
+  /// Screenshot proving the work (required when submitting).
+  proofFileId     String?         @map("proof_file_id") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz()
+
+  application CandidateApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  user        User                 @relation("TimesheetEntries", fields: [userId], references: [id])
+  job         Job                  @relation(fields: [jobId], references: [id])
+  reviewedBy  User?                @relation("TimesheetsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  payout      Payout?              @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  proofFile   FileObject?          @relation("TimesheetProof", fields: [proofFileId], references: [id], onDelete: SetNull)
+
+  @@unique([applicationId, workDate])
+  @@index([userId, status])
+  @@index([jobId, workDate])
+  @@index([status])
+  @@index([payoutId])
+  @@map("timesheet_entries")
+}
+
+/// A payment made to a candidate, covering approved timesheet entries.
+/// The admin pays outside the app and uploads proof (screenshot).
+model Payout {
+  id                 String      @id @default(uuid()) @db.Uuid
+  userId             String      @map("user_id") @db.Uuid
+  amount             Decimal     @db.Decimal(14, 2)
+  currency           PayCurrency
+  reference          String?     @db.VarChar(120)
+  note               String?
+  proofFileId        String?     @map("proof_file_id") @db.Uuid
+  paymentMethodId    String?     @map("payment_method_id") @db.Uuid
+  /// Snapshot, e.g. "UPI name@okhdfcbank" or "Bank ••••1234 (HDFC0001234)"
+  paymentMethodLabel String?     @map("payment_method_label") @db.VarChar(200)
+  paidById           String?     @map("paid_by_id") @db.Uuid
+  paidAt             DateTime    @default(now()) @map("paid_at") @db.Timestamptz()
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+
+  user          User               @relation("PayoutsReceived", fields: [userId], references: [id])
+  paidBy        User?              @relation("PayoutsSent", fields: [paidById], references: [id], onDelete: SetNull)
+  proofFile     FileObject?        @relation("PayoutProof", fields: [proofFileId], references: [id], onDelete: SetNull)
+  paymentMethod UserPaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  entries       TimesheetEntry[]
+
+  @@index([userId, paidAt])
+  @@map("payouts")
+}
+
+/// In-app notifications (bell + /notifications) for candidates and admins.
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  type      NotificationType
+  title     String           @db.VarChar(200)
+  message   String
+  /// In-app path to open, e.g. /projects/applied
+  link      String?          @db.VarChar(500)
+  readAt    DateTime?        @map("read_at") @db.Timestamptz()
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@map("notifications")
 }
 
 model ApplicationStatusHistory {
@@ -648,11 +815,37 @@ model FileObject {
   testimonials              Testimonial[]              @relation("TestimonialPhoto")
   applicationDocuments      JobApplicationDocument[]
   candidateProfileDocuments CandidateProfileDocument[]
+  jobResources              JobResource[]
+  payoutProofs              Payout[]                   @relation("PayoutProof")
+  timesheetProofs           TimesheetEntry[]           @relation("TimesheetProof")
 
   @@unique([bucket, objectKey])
   @@index([uploadedById])
   @@index([scanStatus])
   @@map("file_objects")
+}
+
+/// Training material attached to a job: an uploaded file (PDF, video, image,
+/// audio, document) or an external URL (YouTube, link).
+model JobResource {
+  id           String          @id @default(uuid()) @db.Uuid
+  jobId        String          @map("job_id") @db.Uuid
+  type         JobResourceType
+  title        String          @db.VarChar(200)
+  description  String?
+  fileId       String?         @map("file_id") @db.Uuid
+  url          String?
+  required     Boolean         @default(false)
+  displayOrder Int             @default(0) @map("display_order")
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz()
+
+  job  Job         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  file FileObject? @relation(fields: [fileId], references: [id])
+
+  @@index([jobId, displayOrder])
+  @@index([fileId])
+  @@map("job_resources")
 }
 
 model Testimonial {
@@ -771,8 +964,9 @@ model UserPaymentMethod {
   updatedAt              DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
   deletedAt              DateTime?           @map("deleted_at") @db.Timestamptz()
 
-  user       User  @relation("UserPaymentMethods", fields: [userId], references: [id])
-  reviewedBy User? @relation("ReviewedPaymentMethods", fields: [reviewedById], references: [id])
+  user       User     @relation("UserPaymentMethods", fields: [userId], references: [id])
+  reviewedBy User?    @relation("ReviewedPaymentMethods", fields: [reviewedById], references: [id])
+  payouts    Payout[]
 
   @@index([userId, deletedAt])
   @@index([status, createdAt])

@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -33,6 +34,7 @@ import { CreateDocumentTypeDto } from './dto/create-document-type.dto.js';
 import { CreateProfileFieldDto } from './dto/create-profile-field.dto.js';
 import { ListApplicationsDto } from './dto/list-applications.dto.js';
 import { UpdateApplicationDto } from './dto/update-application.dto.js';
+import { SelectApplicationDto } from './dto/select-application.dto.js';
 import { UpdateApplicationStatusDto } from './dto/update-application-status.dto.js';
 import { UpdateProfileValuesDto } from './dto/update-profile-values.dto.js';
 
@@ -64,6 +66,24 @@ export class ApplicationsController {
   @ApiOperation({ summary: 'List applications for recruitment management' })
   async findAll(@Query() query: ListApplicationsDto) {
     const data = await this.applicationsService.findAll(query);
+    return {
+      success: true,
+      message: 'Applications fetched successfully.',
+      data,
+    };
+  }
+
+  @Get('job/:jobId')
+  @Roles(UserRole.ADMIN, UserRole.RECRUITER)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Applications of one job, with the job summary and status counts',
+  })
+  async findForJob(
+    @Param('jobId', ParseUUIDPipe) jobId: string,
+    @Query() query: ListApplicationsDto,
+  ) {
+    const data = await this.applicationsService.findForJob(jobId, query.status);
     return {
       success: true,
       message: 'Applications fetched successfully.',
@@ -298,6 +318,45 @@ export class ApplicationsController {
     };
   }
 
+  @Get(':id/work-account')
+  @Roles(UserRole.CANDIDATE, UserRole.ADMIN, UserRole.RECRUITER)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Work account (email, password, instructions) of a selected candidate',
+  })
+  async getWorkAccount(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const data = await this.applicationsService.getWorkAccount(id, user.id);
+    return { success: true, data };
+  }
+
+  @Post(':id/select')
+  @Roles(UserRole.ADMIN, UserRole.RECRUITER)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Select a candidate: email the congratulations + work credentials and mark HIRED',
+  })
+  async select(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: SelectApplicationDto,
+  ) {
+    const data = await this.applicationsService.selectCandidate(
+      id,
+      user.id,
+      dto,
+    );
+    return {
+      success: true,
+      message: 'Candidate selected and confirmation email sent.',
+      data,
+    };
+  }
+
   @Patch(':id/status')
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
@@ -313,6 +372,23 @@ export class ApplicationsController {
       message: 'Application status updated successfully.',
       data,
     };
+  }
+
+  @Get(':id/documents/:documentId/view-url')
+  @Roles(UserRole.CANDIDATE, UserRole.ADMIN, UserRole.RECRUITER)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Short-lived signed link to open a document' })
+  async getDocumentViewUrl(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const data = await this.applicationsService.getDocumentViewUrl(
+      id,
+      documentId,
+      user.id,
+    );
+    return { success: true, data };
   }
 
   @Post(':id/documents/:fieldKey')
