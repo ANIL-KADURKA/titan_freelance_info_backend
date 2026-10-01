@@ -40,6 +40,22 @@ export class TestimonialsService {
     });
   }
 
+  /** Published testimonials for the public site (photos stay private). */
+  async findPublished() {
+    const testimonials = await this.prisma.testimonial.findMany({
+      where: { deletedAt: null, status: 'PUBLISHED' },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+    });
+    return testimonials.map((testimonial) => ({
+      id: testimonial.id,
+      authorName: testimonial.authorName,
+      authorRole: testimonial.authorRole,
+      quote: testimonial.quote,
+      joinedAt: testimonial.joinedAt?.toISOString().slice(0, 10) ?? null,
+      sortOrder: testimonial.sortOrder,
+    }));
+  }
+
   async findOne(id: string) {
     this.assertValidUuid(id, 'testimonial');
 

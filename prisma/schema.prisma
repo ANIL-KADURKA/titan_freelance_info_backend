@@ -43,6 +43,7 @@ enum ConsentType {
   MARKETING_EMAILS
   TERMS_AND_CONDITIONS
   PRIVACY_POLICY
+  TRAINER_AGREEMENT
 }
 
 enum SocialMediaType {
@@ -71,6 +72,7 @@ enum OtpPurpose {
   LOGIN
   EMAIL_VERIFICATION
   PASSWORD_RESET
+  PHONE_VERIFICATION
 }
 
 enum PublishStatus {
@@ -205,6 +207,10 @@ model User {
   email                   String        @unique @db.VarChar(320)
   personalEmail           String        @unique @map("personal_email") @db.VarChar(320)
   phone                   String?       @db.VarChar(20)
+  phoneVerifiedAt         DateTime?     @map("phone_verified_at") @db.Timestamptz()
+  legalName               String?       @map("legal_name")
+  referralSource          String?       @map("referral_source") @db.VarChar(60)
+  onboardingCompletedAt   DateTime?     @map("onboarding_completed_at") @db.Timestamptz()
   firstName               String?       @map("first_name")
   lastName                String?       @map("last_name")
   gender                  GenderEnum?
@@ -216,6 +222,7 @@ model User {
   statusReason            String?       @map("status_reason")
   emailVerifiedAt         DateTime?     @map("email_verified_at") @db.Timestamptz()
   failedLoginCount        Int           @default(0) @map("failed_login_count")
+  tokenVersion            Int           @default(0) @map("token_version")
   lockedUntil             DateTime?     @map("locked_until") @db.Timestamptz()
   lastLoginAt             DateTime?     @map("last_login_at") @db.Timestamptz()
   lastLoginIp             String?       @map("last_login_ip")
@@ -241,6 +248,8 @@ model User {
   verifiedApplicationDocuments JobApplicationDocument[]   @relation("DocumentVerifiedBy")
   candidateProfileValues       CandidateProfileValue[]
   candidateProfileDocuments    CandidateProfileDocument[]
+  paymentMethods               UserPaymentMethod[]        @relation("UserPaymentMethods")
+  reviewedPaymentMethods       UserPaymentMethod[]        @relation("ReviewedPaymentMethods")
 
   @@index([status])
   @@map("users")
@@ -589,6 +598,7 @@ model AuthOtp {
   userId      String     @map("user_id") @db.Uuid
   purpose     OtpPurpose
   otpHash     String     @map("otp_hash") @db.VarChar(255)
+  target      String?    @db.VarChar(320)
   expiresAt   DateTime   @map("expires_at") @db.Timestamptz()
   attempts    Int        @default(0)
   maxAttempts Int        @default(5) @map("max_attempts")
@@ -603,14 +613,15 @@ model AuthOtp {
 }
 
 model ConsentRecord {
-  id          String      @id @default(uuid()) @db.Uuid
-  userId      String      @map("user_id") @db.Uuid
-  type        ConsentType
-  version     String      @db.VarChar(30)
-  grantedAt   DateTime    @default(now()) @map("granted_at") @db.Timestamptz()
-  withdrawnAt DateTime?   @map("withdrawn_at") @db.Timestamptz()
-  ipAddress   String?     @map("ip_address")
-  userAgent   String?     @map("user_agent")
+  id            String      @id @default(uuid()) @db.Uuid
+  userId        String      @map("user_id") @db.Uuid
+  type          ConsentType
+  version       String      @db.VarChar(30)
+  signatureName String?     @map("signature_name")
+  grantedAt     DateTime    @default(now()) @map("granted_at") @db.Timestamptz()
+  withdrawnAt   DateTime?   @map("withdrawn_at") @db.Timestamptz()
+  ipAddress     String?     @map("ip_address")
+  userAgent     String?     @map("user_agent")
 
   user User @relation(fields: [userId], references: [id])
 
@@ -726,4 +737,45 @@ model UserProfessionalInfo {
   user User @relation(fields: [userId], references: [id])
 
   @@map("user_professional_info")
+}
+
+enum PaymentMethodType {
+  UPI
+  BANK
+}
+
+enum PaymentMethodStatus {
+  VERIFICATION_PENDING
+  VERIFIED
+  REJECTED
+}
+
+/// Where a freelancer receives payouts. Admins verify each method before use.
+model UserPaymentMethod {
+  id                     String              @id @default(uuid()) @db.Uuid
+  userId                 String              @map("user_id") @db.Uuid
+  type                   PaymentMethodType
+  status                 PaymentMethodStatus @default(VERIFICATION_PENDING)
+  upiId                  String?             @map("upi_id") @db.VarChar(256)
+  accountHolderName      String?             @map("account_holder_name") @db.VarChar(120)
+  /// AES-256-GCM ciphertext; never returned to the candidate.
+  accountNumberEncrypted String?             @map("account_number_encrypted")
+  accountNumberLast4     String?             @map("account_number_last4") @db.VarChar(4)
+  ifsc                   String?             @db.VarChar(11)
+  /// HMAC of the normalised UPI ID / account+IFSC, used to block duplicates.
+  fingerprint            String              @db.VarChar(64)
+  rejectionReason        String?             @map("rejection_reason") @db.VarChar(500)
+  reviewedById           String?             @map("reviewed_by_id") @db.Uuid
+  reviewedAt             DateTime?           @map("reviewed_at") @db.Timestamptz()
+  createdAt              DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt              DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt              DateTime?           @map("deleted_at") @db.Timestamptz()
+
+  user       User  @relation("UserPaymentMethods", fields: [userId], references: [id])
+  reviewedBy User? @relation("ReviewedPaymentMethods", fields: [reviewedById], references: [id])
+
+  @@index([userId, deletedAt])
+  @@index([status, createdAt])
+  @@index([userId, fingerprint])
+  @@map("user_payment_methods")
 }

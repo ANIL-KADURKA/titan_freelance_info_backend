@@ -9,6 +9,8 @@ import { CommonModule } from './common/common.module.js';
 import { LoggingInterceptor } from './common/logging.interceptor.js';
 import { FaqModule } from './faq/faq.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
+import { OnboardingModule } from './onboarding/onboarding.module.js';
+import { PaymentMethodsModule } from './payment-methods/payment-methods.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { TestimonialsModule } from './testimonials/testimonials.module.js';
 import { UserModule } from './user/user.module.js';
@@ -26,6 +28,8 @@ import { WebsiteContentModule } from './website-content/website-content.module.j
     UserModule,
     FaqModule,
     JobsModule,
+    OnboardingModule,
+    PaymentMethodsModule,
     TestimonialsModule,
     WebsiteContentModule,
     ApplicationsModule,

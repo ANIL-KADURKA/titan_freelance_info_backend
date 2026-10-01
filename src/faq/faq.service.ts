@@ -138,6 +138,16 @@ export class FaqService {
       throw new NotFoundException('FAQ category not found');
     }
 
+    // FAQs linked to a deleted category would silently drop off the site.
+    const linkedFaqs = await this.prisma.faq.count({
+      where: { faqCategoryId: id, deletedAt: null },
+    });
+    if (linkedFaqs > 0) {
+      throw new BadRequestException(
+        `Move or delete the ${linkedFaqs} FAQ${linkedFaqs === 1 ? '' : 's'} in this category first`,
+      );
+    }
+
     await this.prisma.faqCategory.update({
       where: { id },
       data: { deletedAt: new Date() },
@@ -152,6 +162,34 @@ export class FaqService {
       include: { faqCategory: true },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
     });
+  }
+
+  /** Published FAQs for the public site, in category then item order. */
+  async findPublishedFaqs() {
+    const faqs = await this.prisma.faq.findMany({
+      where: {
+        deletedAt: null,
+        status: 'PUBLISHED',
+        OR: [
+          { faqCategoryId: null },
+          { faqCategory: { status: 'PUBLISHED', deletedAt: null } },
+        ],
+      },
+      include: { faqCategory: { select: { name: true, sortOrder: true } } },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    return faqs
+      .map((faq) => ({
+        id: faq.id,
+        question: faq.question,
+        answer: faq.answer,
+        category: faq.faqCategory?.name ?? faq.category ?? 'General',
+        categoryOrder: faq.faqCategory?.sortOrder ?? Number.MAX_SAFE_INTEGER,
+        sortOrder: faq.sortOrder,
+      }))
+      .sort((a, b) => a.categoryOrder - b.categoryOrder)
+      .map(({ categoryOrder: _categoryOrder, ...faq }) => faq);
   }
 
   async findFaqById(id: string) {
