@@ -162,7 +162,8 @@ export class DashboardService {
       unpaid,
       paidThisMonth,
       recentApplications,
-    ] = await Promise.all([
+      // One batched transaction = one pooled connection instead of ten.
+    ] = await this.prisma.$transaction([
       this.prisma.job.count({
         where: { status: JobStatus.PUBLISHED, deletedAt: null },
       }),
