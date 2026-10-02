@@ -89,6 +89,7 @@ enum NotificationType {
   TIMESHEET_REVIEWED
   PAYOUT_SENT
   COMMUNITY_POST
+  AGREEMENT_UPDATED
 }
 
 enum AnnouncementStatus {
@@ -332,6 +333,7 @@ model User {
   payoutsReceived              Payout[]                   @relation("PayoutsReceived")
   payoutsSent                  Payout[]                   @relation("PayoutsSent")
   announcementsCreated         Announcement[]             @relation("AnnouncementsCreated")
+  agreementsCreated            Agreement[]                @relation("AgreementsCreated")
   announcementReactions        AnnouncementReaction[]     @relation("AnnouncementReactions")
 
   @@index([status])
@@ -863,11 +865,34 @@ model ConsentRecord {
   withdrawnAt   DateTime?   @map("withdrawn_at") @db.Timestamptz()
   ipAddress     String?     @map("ip_address")
   userAgent     String?     @map("user_agent")
+  /// The exact agreement text that was signed (trainer agreement only).
+  agreementId   String?     @map("agreement_id") @db.Uuid
 
-  user User @relation(fields: [userId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+  agreement Agreement? @relation(fields: [agreementId], references: [id])
 
   @@index([userId, type])
+  @@index([agreementId])
   @@map("consent_records")
+}
+
+/// Every published version of the trainer agreement; the highest
+/// (major, minor) is current. A new major version requires re-signing.
+model Agreement {
+  id          String   @id @default(uuid()) @db.Uuid
+  major       Int
+  minor       Int
+  title       String   @db.VarChar(200)
+  body        String
+  changeNote  String?  @map("change_note") @db.VarChar(300)
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  createdBy  User?           @relation("AgreementsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  signatures ConsentRecord[]
+
+  @@unique([major, minor])
+  @@map("agreements")
 }
 
 model FileObject {

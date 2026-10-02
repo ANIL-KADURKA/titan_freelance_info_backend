@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { AgreementsService } from '../agreements/agreements.service.js';
 import { AuthService, getOnboardingStep } from '../auth/auth.service.js';
 import { normalizePhone } from '../common/phone.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -17,13 +18,6 @@ import {
 } from '../notifications/notification-messages.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 
-// Bump when the trainer agreement text changes so users re-accept it.
-export const TRAINER_AGREEMENT_VERSION = '2026-10-01';
-
-function normalizeName(value: string) {
-  return value.trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
 @Injectable()
 export class OnboardingService {
   private readonly logger = new Logger(OnboardingService.name);
@@ -33,6 +27,7 @@ export class OnboardingService {
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
     private readonly notifications: NotificationsService,
+    private readonly agreements: AgreementsService,
   ) {}
 
   async getState(userId: string) {
@@ -83,7 +78,7 @@ export class OnboardingService {
           }
         : null,
       agreementSignedAt: agreement?.grantedAt.toISOString() ?? null,
-      agreementVersion: TRAINER_AGREEMENT_VERSION,
+      agreementVersion: (await this.agreements.current()).version,
       step: getOnboardingStep(user),
     };
   }
@@ -192,33 +187,7 @@ export class OnboardingService {
       throw new BadRequestException('Complete the previous steps first');
     }
 
-    if (normalizeName(signature) !== normalizeName(user.legalName)) {
-      throw new BadRequestException(
-        `Type your full name exactly as "${user.legalName}" to sign.`,
-      );
-    }
-
-    const existing = await this.prisma.consentRecord.findFirst({
-      where: {
-        userId,
-        type: 'TRAINER_AGREEMENT',
-        version: TRAINER_AGREEMENT_VERSION,
-        withdrawnAt: null,
-      },
-    });
-
-    if (!existing) {
-      await this.prisma.consentRecord.create({
-        data: {
-          userId,
-          type: 'TRAINER_AGREEMENT',
-          version: TRAINER_AGREEMENT_VERSION,
-          signatureName: signature.trim(),
-          userAgent,
-          ipAddress: ipAddress ?? null,
-        },
-      });
-    }
+    await this.agreements.sign(userId, signature, userAgent, ipAddress);
 
     await this.prisma.user.update({
       where: { id: userId },
