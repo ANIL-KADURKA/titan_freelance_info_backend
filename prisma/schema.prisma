@@ -47,6 +47,7 @@ enum ConsentType {
   TERMS_AND_CONDITIONS
   PRIVACY_POLICY
   TRAINER_AGREEMENT
+  TESTIMONIAL
 }
 
 enum SocialMediaType {
@@ -90,6 +91,16 @@ enum NotificationType {
   PAYOUT_SENT
   COMMUNITY_POST
   AGREEMENT_UPDATED
+  TESTIMONIAL_SUBMITTED
+  TESTIMONIAL_REVIEWED
+}
+
+/// PENDING = waiting for admin review; only APPROVED is shown publicly.
+enum TestimonialStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
 }
 
 enum AnnouncementStatus {
@@ -334,6 +345,10 @@ model User {
   payoutsSent                  Payout[]                   @relation("PayoutsSent")
   announcementsCreated         Announcement[]             @relation("AnnouncementsCreated")
   agreementsCreated            Agreement[]                @relation("AgreementsCreated")
+  testimonial                  Testimonial?               @relation("TestimonialAuthor")
+  testimonialsReviewed         Testimonial[]              @relation("TestimonialReviewer")
+  caseStudies                  CaseStudy[]                @relation("CaseStudySubject")
+  caseStudiesCreated           CaseStudy[]                @relation("CaseStudiesCreated")
   announcementReactions        AnnouncementReaction[]     @relation("AnnouncementReactions")
 
   @@index([status])
@@ -393,6 +408,7 @@ model Job {
   resources         JobResource[]
   timesheetEntries  TimesheetEntry[]
   announcements     Announcement[]
+  caseStudies       CaseStudy[]
 
   @@index([status, publishedAt])
   @@index([categoryId])
@@ -912,6 +928,8 @@ model FileObject {
 
   uploadedBy                User?                      @relation("UploadedByUser", fields: [uploadedById], references: [id])
   testimonials              Testimonial[]              @relation("TestimonialPhoto")
+  testimonialPendingPhotos  Testimonial[]              @relation("TestimonialPendingPhoto")
+  caseStudyPhotos           CaseStudy[]                @relation("CaseStudyPhoto")
   applicationDocuments      JobApplicationDocument[]
   candidateProfileDocuments CandidateProfileDocument[]
   jobResources              JobResource[]
@@ -948,22 +966,78 @@ model JobResource {
 }
 
 model Testimonial {
-  id         String        @id @default(uuid()) @db.Uuid
-  authorName String        @map("author_name")
-  authorRole String?       @map("author_role")
-  quote      String
-  joinedAt   DateTime?     @map("joined_at") @db.Date
-  photoId    String?       @map("photo_id") @db.Uuid
-  status     PublishStatus @default(DRAFT)
-  sortOrder  Int           @default(0) @map("sort_order")
-  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt  DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt  DateTime?     @map("deleted_at") @db.Timestamptz()
+  id              String            @id @default(uuid()) @db.Uuid
+  /// The candidate who wrote it; null when an admin added it by hand.
+  userId          String?           @unique @map("user_id") @db.Uuid
+  authorName      String            @map("author_name")
+  authorRole      String?           @map("author_role")
+  quote           String
+  rating          Int?
+  joinedAt        DateTime?         @map("joined_at") @db.Date
+  photoId         String?           @map("photo_id") @db.Uuid
+  status          TestimonialStatus @default(PENDING)
+  /// Edits to an approved testimonial wait here; the live version stays
+  /// public until an admin approves them.
+  pendingQuote    String?           @map("pending_quote")
+  pendingRole     String?           @map("pending_role")
+  pendingRating   Int?              @map("pending_rating")
+  pendingPhotoId  String?           @map("pending_photo_id") @db.Uuid
+  rejectionReason String?           @map("rejection_reason") @db.VarChar(500)
+  submittedAt     DateTime?         @map("submitted_at") @db.Timestamptz()
+  reviewedById    String?           @map("reviewed_by_id") @db.Uuid
+  reviewedAt      DateTime?         @map("reviewed_at") @db.Timestamptz()
+  consentedAt     DateTime?         @map("consented_at") @db.Timestamptz()
+  sortOrder       Int               @default(0) @map("sort_order")
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz()
 
-  photo FileObject? @relation("TestimonialPhoto", fields: [photoId], references: [id])
+  user         User?       @relation("TestimonialAuthor", fields: [userId], references: [id], onDelete: SetNull)
+  reviewedBy   User?       @relation("TestimonialReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  photo        FileObject? @relation("TestimonialPhoto", fields: [photoId], references: [id])
+  pendingPhoto FileObject? @relation("TestimonialPendingPhoto", fields: [pendingPhotoId], references: [id], onDelete: SetNull)
 
   @@index([status, sortOrder])
   @@map("testimonials")
+}
+
+/// Long-form success stories, written and published by admins.
+model CaseStudy {
+  id                String        @id @default(uuid()) @db.Uuid
+  slug              String        @unique @db.VarChar(160)
+  title             String        @db.VarChar(200)
+  summary           String        @db.VarChar(500)
+  personName        String        @map("person_name") @db.VarChar(120)
+  personRole        String?       @map("person_role") @db.VarChar(120)
+  photoId           String?       @map("photo_id") @db.Uuid
+  /// Optional links for admins (stats auto-fill); never shown publicly.
+  userId            String?       @map("user_id") @db.Uuid
+  jobId             String?       @map("job_id") @db.Uuid
+  background        String
+  howItBegan        String        @map("how_it_began")
+  gettingSelected   String        @map("getting_selected")
+  findingFooting    String        @map("finding_footing")
+  hardParts         String        @map("hard_parts")
+  support           String
+  outcome           String
+  durationText      String?       @map("duration_text") @db.VarChar(60)
+  earningsText      String?       @map("earnings_text")
+  consentRecordedAt DateTime?     @map("consent_recorded_at") @db.Timestamptz()
+  status            PublishStatus @default(DRAFT)
+  publishedAt       DateTime?     @map("published_at") @db.Timestamptz()
+  sortOrder         Int           @default(0) @map("sort_order")
+  createdById       String?       @map("created_by_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz()
+
+  photo     FileObject? @relation("CaseStudyPhoto", fields: [photoId], references: [id], onDelete: SetNull)
+  user      User?       @relation("CaseStudySubject", fields: [userId], references: [id], onDelete: SetNull)
+  job       Job?        @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  createdBy User?       @relation("CaseStudiesCreated", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([status, sortOrder])
+  @@map("case_studies")
 }
 
 model UserAddress {

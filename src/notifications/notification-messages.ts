@@ -252,3 +252,39 @@ export function agreementUpdated(
     link: '/agreements',
   };
 }
+
+export function testimonialSubmitted(
+  candidate: string,
+  isEdit: boolean,
+): NotificationInput {
+  return {
+    type: 'TESTIMONIAL_SUBMITTED',
+    title: isEdit ? 'Testimonial edited' : 'New testimonial to review',
+    message: isEdit
+      ? `${candidate} edited their live testimonial. Review the changes.`
+      : `${candidate} shared a testimonial. Review it before it goes live.`,
+    link: '/admin/content/testimonials',
+  };
+}
+
+export function testimonialReviewed(
+  approved: boolean,
+  reason?: string | null,
+): NotificationInput {
+  return approved
+    ? {
+        type: 'TESTIMONIAL_REVIEWED',
+        title: 'Your testimonial is live 🎉',
+        message:
+          'Thanks for sharing your experience. It now appears on the Titan website.',
+        link: '/testimonials/share',
+      }
+    : {
+        type: 'TESTIMONIAL_REVIEWED',
+        title: 'Testimonial not approved',
+        message: reason
+          ? `Reason: ${reason}. You can edit it and submit again.`
+          : 'You can edit it and submit again.',
+        link: '/testimonials/share',
+      };
+}

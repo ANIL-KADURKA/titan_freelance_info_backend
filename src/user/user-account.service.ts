@@ -5,11 +5,9 @@ import {
 } from '@nestjs/common';
 import { AwsDocumentUploadService } from '../common/aws-document-upload.service.js';
 import type { UploadedDocument } from '../common/document-validation.service.js';
+import { assertPhoto } from '../common/photo-rules.js';
 import { S3StorageService } from '../common/s3-storage.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-
-const PHOTO_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
-const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
 
 /** Account extras for the profile page: login history and profile photo. */
 @Injectable()
@@ -62,12 +60,7 @@ export class UserAccountService {
 
   async setPhoto(userId: string, file?: UploadedDocument) {
     if (!file) throw new BadRequestException('Choose an image to upload.');
-    if (!PHOTO_TYPES.includes((file.mimetype ?? '').toLowerCase())) {
-      throw new BadRequestException('Upload a PNG, JPG or WebP image.');
-    }
-    if ((file.size ?? file.buffer.length) > PHOTO_MAX_BYTES) {
-      throw new BadRequestException('The image must be 5 MB or smaller.');
-    }
+    assertPhoto(file);
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { profileImageId: true },
