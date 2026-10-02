@@ -14,6 +14,9 @@ import {
   WorkMode,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { newProjectAnnouncement } from '../community/announcement-rules.js';
+import { communityPost } from '../notifications/notification-messages.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { JobResourcesService } from './job-resources.service.js';
 import { UserRole } from '../auth/roles.enum.js';
 import { CreateJobApplicationFieldDto } from './dto/create-job-application-field.dto.js';
@@ -35,6 +38,7 @@ export class JobsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobResourcesService: JobResourcesService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -957,7 +961,7 @@ export class JobsService {
     );
 
     try {
-      return await this.prisma.$transaction(
+      const created = await this.prisma.$transaction(
         async (tx) => {
           const job = await tx.job.create({
             data: {
@@ -983,10 +987,28 @@ export class JobsService {
             createdById,
             resources,
           );
+          if (dto.postToCommunity) {
+            await tx.announcement.create({
+              data: newProjectAnnouncement(job, createdById),
+            });
+          }
           return job;
         },
         { timeout: 30_000 },
       );
+      // After commit: tell candidates about the new project if it's live.
+      if (dto.postToCommunity && created.status === JobStatus.PUBLISHED) {
+        const post = newProjectAnnouncement(created, createdById);
+        await this.notifications.notifyCandidates(
+          communityPost({
+            title: post.title,
+            body: post.body,
+            type: 'NEW_PROJECT',
+            jobSlug: created.slug,
+          }),
+        );
+      }
+      return created;
     } catch (error) {
       this.rethrowUniqueConstraint(
         error,

@@ -3,6 +3,7 @@ import { JobStatus, PayCurrency, PayUnit, WorkMode } from '@prisma/client';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
@@ -229,6 +230,15 @@ export class CreateJobDto {
   @ValidateNested({ each: true })
   @Type(() => CreateJobEligibilityRuleDto)
   eligibilityRules?: CreateJobEligibilityRuleDto[];
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'Also post the project to the Community feed for 2 days (live when the job is published).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  postToCommunity?: boolean;
 
   @ApiPropertyOptional({
     type: [CreateJobResourceDto],

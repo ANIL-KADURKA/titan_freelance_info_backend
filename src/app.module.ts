@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { CommunityModule } from './community/community.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { TimesheetsModule } from './timesheets/timesheets.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
@@ -39,6 +40,7 @@ import { WebsiteContentModule } from './website-content/website-content.module.j
     NotificationsModule,
     TimesheetsModule,
     DashboardModule,
+    CommunityModule,
   ],
   controllers: [AppController],
   providers: [

@@ -81,6 +81,40 @@ export class NotificationsService {
   }
 
   /** A page of my notifications (newest first) plus the unread count. */
+  /**
+   * Notifies every active candidate (e.g. a new community post). Inserts in
+   * batches so a large audience doesn't become one huge query.
+   */
+  async notifyCandidates(input: NotificationInput) {
+    try {
+      const candidates = await this.prisma.user.findMany({
+        where: {
+          deletedAt: null,
+          roles: { some: { role: { name: RoleName.CANDIDATE } } },
+        },
+        select: { id: true },
+      });
+      for (let start = 0; start < candidates.length; start += 500) {
+        const batch = candidates.slice(start, start + 500);
+        const notifications =
+          await this.prisma.notification.createManyAndReturn({
+            data: batch.map((user) => ({
+              userId: user.id,
+              ...input,
+              link: input.link ?? null,
+            })),
+          });
+        for (const notification of notifications) {
+          this.created.next(notification);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Candidate notification failed | type=${input.type} | error=${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   async listMine(userId: string, query: NotificationsQueryDto = {}) {
     const where = {
       userId,

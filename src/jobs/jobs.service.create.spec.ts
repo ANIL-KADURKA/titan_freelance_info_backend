@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateJobDto } from './dto/create-job.dto.js';
 import type { JobResourcesService } from './job-resources.service.js';
+import type { NotificationsService } from '../notifications/notifications.service.js';
 import { JobsService } from './jobs.service.js';
 
 const categoryId = '22222222-2222-4222-8222-222222222222';
@@ -11,7 +12,11 @@ function createService({ failInTransaction = false } = {}) {
   const jobCreate = vi.fn(({ data }) =>
     Promise.resolve({ id: 'job-1', ...data }),
   );
-  const tx = { job: { create: jobCreate } };
+  const announcementCreate = vi.fn().mockResolvedValue({ id: 'a1' });
+  const tx = {
+    job: { create: jobCreate },
+    announcement: { create: announcementCreate },
+  };
   const $transaction = vi.fn(async (run: (client: typeof tx) => unknown) => {
     const result = await run(tx);
     if (failInTransaction) throw new Error('db down');
@@ -37,17 +42,25 @@ function createService({ failInTransaction = false } = {}) {
   ]);
   const persistPreparedResources = vi.fn().mockResolvedValue(undefined);
   const discardDraftUploads = vi.fn().mockResolvedValue(undefined);
+  const notifyCandidates = vi.fn().mockResolvedValue(undefined);
+  const notifications = { notifyCandidates };
   const resources = {
     prepareDraftResources,
     persistPreparedResources,
     discardDraftUploads,
   } as unknown as JobResourcesService;
   return {
-    service: new JobsService(prisma, resources),
+    service: new JobsService(
+      prisma,
+      resources,
+      notifications as unknown as NotificationsService,
+    ),
+    notifyCandidates,
     jobCreate,
     $transaction,
     persistPreparedResources,
     discardDraftUploads,
+    announcementCreate,
   };
 }
 
@@ -97,6 +110,34 @@ describe('JobsService.createJob (transactional)', () => {
       userId,
       expect.any(Array),
     );
+  });
+
+  it('posts the project to the community in the same transaction', async () => {
+    const { service, announcementCreate, notifyCandidates } = createService();
+    await service.createJob(
+      dto({ status: 'PUBLISHED', postToCommunity: true }),
+      userId,
+    );
+    expect(announcementCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        type: 'NEW_PROJECT',
+        jobId: 'job-1',
+        status: 'PUBLISHED',
+      }),
+    });
+    expect(notifyCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'COMMUNITY_POST',
+        link: expect.stringMatching(/^\/jobs\//),
+      }),
+    );
+  });
+
+  it('does not post to the community unless asked', async () => {
+    const { service, announcementCreate, notifyCandidates } = createService();
+    await service.createJob(dto(), userId);
+    expect(announcementCreate).not.toHaveBeenCalled();
+    expect(notifyCandidates).not.toHaveBeenCalled();
   });
 
   it('deletes staged uploads when the transaction fails', async () => {
