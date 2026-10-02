@@ -13,7 +13,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
-import { randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import type { OtpPurpose } from '@prisma/client';
 import { normalizePhone } from '../common/phone.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -27,6 +27,11 @@ import { UpdateCredentialsDto } from './dto/update-credentials.dto.js';
 import { TestEmailDto } from './dto/test-email.dto.js';
 import { SeedDefaultUsersDto } from './dto/seed-default-users.dto.js';
 import { UserRole } from './roles.enum.js';
+import {
+  type GoogleProfile,
+  verifyGoogleAccessToken,
+  verifyGoogleIdToken,
+} from './google-identity.js';
 import {
   passwordResetEmail,
   signupVerificationEmail,
@@ -138,20 +143,7 @@ export class AuthService {
     // Always (re)assert the default role, including when a pending sign-up is
     // retried: an earlier attempt may have failed before the role was saved,
     // and a role-less account is rejected by every candidate endpoint.
-    const defaultRole = await this.prisma.role.upsert({
-      where: { name: UserRole.CANDIDATE },
-      update: {},
-      create: {
-        name: UserRole.CANDIDATE,
-        description: 'Candidate role',
-        isSystem: true,
-      },
-    });
-    await this.prisma.userRole.upsert({
-      where: { userId_roleId: { userId: user.id, roleId: defaultRole.id } },
-      update: {},
-      create: { userId: user.id, roleId: defaultRole.id },
-    });
+    await this.assignCandidateRole(user.id);
 
     await this.issueOtp({
       userId: user.id,
@@ -290,6 +282,100 @@ export class AuthService {
       message: isPasswordReset
         ? 'A reset code has been sent to your email.'
         : 'OTP sent to your email',
+    };
+  }
+
+  /**
+   * Sign in or sign up with Google. An existing account with the same email
+   * is linked (and its email counts as verified); otherwise a new candidate
+   * account is created and continues to onboarding.
+   */
+  async googleLogin(
+    token: { credential?: string; accessToken?: string },
+    userAgent?: string,
+    ipAddress?: string,
+  ) {
+    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
+    if (!clientId) {
+      throw new ServiceUnavailableException(
+        'Google sign-in is not configured.',
+      );
+    }
+    const profile = token.accessToken
+      ? await verifyGoogleAccessToken(token.accessToken, clientId)
+      : await verifyGoogleIdToken(token.credential ?? '', clientId);
+    const google = this.googleAccount(profile);
+
+    const existing = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { googleId: profile.googleId },
+          { email: profile.email },
+          { personalEmail: profile.email },
+        ],
+      },
+    });
+
+    if (existing) {
+      if (existing.googleId && existing.googleId !== profile.googleId) {
+        throw new ConflictException(
+          'This email is linked to a different Google account.',
+        );
+      }
+      if (
+        existing.deletedAt ||
+        (existing.status !== 'ACTIVE' &&
+          existing.status !== 'PENDING_VERIFICATION')
+      ) {
+        throw new UnauthorizedException('User account is not active yet');
+      }
+      await this.prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          googleId: profile.googleId,
+          googlePictureUrl: profile.picture ?? existing.googlePictureUrl,
+          // Google has verified this email.
+          ...(existing.status === 'PENDING_VERIFICATION'
+            ? { status: 'ACTIVE', emailVerifiedAt: new Date() }
+            : {}),
+          ...(existing.emailVerifiedAt ? {} : { emailVerifiedAt: new Date() }),
+          firstName: existing.firstName ?? profile.firstName,
+          lastName: existing.lastName ?? profile.lastName,
+        },
+      });
+      this.logger.log(`Google sign-in for existing user ${existing.id}`);
+      return {
+        ...(await this.createSession(
+          existing.id,
+          existing.email,
+          userAgent,
+          ipAddress,
+        )),
+        isNewUser: false,
+        google,
+      };
+    }
+
+    const user = await this.prisma.user.create({
+      data: {
+        email: profile.email,
+        personalEmail: profile.email,
+        googleId: profile.googleId,
+        googlePictureUrl: profile.picture,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        // No password yet: an unguessable hash. "Forgot password" sets one.
+        passwordHash: await bcrypt.hash(randomBytes(32).toString('hex'), 12),
+        status: 'ACTIVE',
+        emailVerifiedAt: new Date(),
+      },
+    });
+    await this.assignCandidateRole(user.id);
+    this.logger.log(`User signed up with Google: ${user.id}`);
+    return {
+      ...(await this.createSession(user.id, user.email, userAgent, ipAddress)),
+      isNewUser: true,
+      google,
     };
   }
 
@@ -698,6 +784,34 @@ export class AuthService {
         create: role,
       });
     }
+  }
+
+  /** Shown on the login page next time ("Sign in as …"). */
+  private googleAccount(profile: GoogleProfile) {
+    return {
+      name:
+        [profile.firstName, profile.lastName].filter(Boolean).join(' ') ||
+        profile.email,
+      email: profile.email,
+      picture: profile.picture,
+    };
+  }
+
+  private async assignCandidateRole(userId: string) {
+    const defaultRole = await this.prisma.role.upsert({
+      where: { name: UserRole.CANDIDATE },
+      update: {},
+      create: {
+        name: UserRole.CANDIDATE,
+        description: 'Candidate role',
+        isSystem: true,
+      },
+    });
+    await this.prisma.userRole.upsert({
+      where: { userId_roleId: { userId, roleId: defaultRole.id } },
+      update: {},
+      create: { userId, roleId: defaultRole.id },
+    });
   }
 
   private generateOtp() {

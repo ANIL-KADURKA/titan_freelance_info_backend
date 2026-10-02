@@ -305,6 +305,10 @@ model User {
   dateOfBirth             DateTime?     @map("date_of_birth") @db.Date
   profileImageId          String?       @map("profile_image_id") @db.Uuid
   passwordHash            String        @map("password_hash")
+  /// Google account id ("sub") once the user signs in with Google.
+  googleId                String?       @unique @map("google_id") @db.VarChar(64)
+  /// Google profile photo; shown when no photo has been uploaded.
+  googlePictureUrl        String?       @map("google_picture_url") @db.VarChar(1000)
   status                  AccountStatus @default(PENDING_VERIFICATION)
   statusReason            String?       @map("status_reason")
   emailVerifiedAt         DateTime?     @map("email_verified_at") @db.Timestamptz()

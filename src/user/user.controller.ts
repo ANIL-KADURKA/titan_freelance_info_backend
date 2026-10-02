@@ -16,6 +16,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { UploadedDocument } from '../common/document-validation.service.js';
 import { UserAccountService } from './user-account.service.js';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto.js';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto.js';
 import { UserService } from './user.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/roles.guard.js';
@@ -76,6 +77,17 @@ export class UserController {
   async removePhoto(@CurrentUser() user: { id: string }) {
     const data = await this.userAccountService.removePhoto(user.id);
     return { success: true, message: 'Profile photo removed.', data };
+  }
+
+  @Patch('me')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update my personal details' })
+  async updateMe(
+    @CurrentUser() user: { id: string },
+    @Body() dto: UpdateMyProfileDto,
+  ) {
+    const data = await this.userAccountService.updateMe(user.id, dto);
+    return { success: true, message: 'Profile updated.', data };
   }
 
   @Get('me')
