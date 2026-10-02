@@ -240,3 +240,15 @@ export function communityPost(post: {
         : '/community',
   };
 }
+
+export function agreementUpdated(
+  version: string,
+  changeNote: string | null,
+): NotificationInput {
+  return {
+    type: 'AGREEMENT_UPDATED',
+    title: `Trainer agreement updated (${version})`,
+    message: `${changeNote ? `${changeNote}. ` : ''}Please review and re-sign it to keep working on projects.`,
+    link: '/agreements',
+  };
+}
