@@ -3,7 +3,7 @@ import type { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateJobDto } from './dto/create-job.dto.js';
 import type { JobResourcesService } from './job-resources.service.js';
 import type { NotificationsService } from '../notifications/notifications.service.js';
-import { JobsService } from './jobs.service.js';
+import { assertFutureDeadline, JobsService } from './jobs.service.js';
 
 const categoryId = '22222222-2222-4222-8222-222222222222';
 const userId = '33333333-3333-4333-8333-333333333333';
@@ -163,5 +163,26 @@ describe('JobsService.createJob (transactional)', () => {
     ).rejects.toThrow('used more than once');
     expect($transaction).not.toHaveBeenCalled();
     expect(discardDraftUploads).toHaveBeenCalled();
+  });
+});
+
+describe('assertFutureDeadline', () => {
+  const now = new Date('2026-10-02T10:00:00Z');
+
+  it('accepts no deadline or a future one', () => {
+    expect(() => assertFutureDeadline(undefined, now)).not.toThrow();
+    expect(() => assertFutureDeadline(null, now)).not.toThrow();
+    expect(() =>
+      assertFutureDeadline('2026-10-15T18:30:00.000Z', now),
+    ).not.toThrow();
+  });
+
+  it('rejects a past or invalid deadline', () => {
+    expect(() => assertFutureDeadline('2026-10-01T00:00:00.000Z', now)).toThrow(
+      'must be in the future',
+    );
+    expect(() => assertFutureDeadline('not-a-date', now)).toThrow(
+      'valid application deadline',
+    );
   });
 });
