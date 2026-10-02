@@ -15,6 +15,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { UploadedDocument } from '../common/document-validation.service.js';
 import { UserAccountService } from './user-account.service.js';
+import { AdminUsersQueryDto } from './dto/admin-users-query.dto.js';
 import { UserService } from './user.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/roles.guard.js';
@@ -91,17 +92,15 @@ export class UserController {
   @Roles(UserRole.ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List all users for admin management' })
-  listUsersForAdmin(
-    @Query('status') status?: string,
-    @Query('role') role?: string,
-    @Query('search') search?: string,
-    @Query('includeSummary') includeSummary?: string,
-  ) {
+  listUsersForAdmin(@Query() query: AdminUsersQueryDto) {
     return this.userService.listUsersForAdmin({
-      status,
-      role,
-      search,
-      includeSummary: includeSummary === 'true' || includeSummary === '1',
+      status: query.status,
+      role: query.role,
+      search: query.search,
+      includeSummary:
+        query.includeSummary === 'true' || query.includeSummary === '1',
+      page: query.page,
+      pageSize: query.pageSize,
     });
   }
 

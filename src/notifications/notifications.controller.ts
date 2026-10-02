@@ -5,6 +5,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Sse,
   UseGuards,
   type MessageEvent,
@@ -13,6 +14,7 @@ import { interval, map, merge, type Observable, of } from 'rxjs';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import { NotificationsQueryDto } from './dto/notifications-query.dto.js';
 import { NotificationsService } from './notifications.service.js';
 
 type AuthenticatedUser = { id: string };
@@ -26,8 +28,11 @@ export class NotificationsController {
 
   @Get('me')
   @ApiOperation({ summary: 'My latest notifications and unread count' })
-  listMine(@CurrentUser() user: AuthenticatedUser) {
-    return this.notifications.listMine(user.id);
+  listMine(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: NotificationsQueryDto,
+  ) {
+    return this.notifications.listMine(user.id, query);
   }
 
   /**

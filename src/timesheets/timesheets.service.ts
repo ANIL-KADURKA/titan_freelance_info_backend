@@ -21,6 +21,7 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { AwsDocumentUploadService } from '../common/aws-document-upload.service.js';
 import type { UploadedDocument } from '../common/document-validation.service.js';
 import { S3StorageService } from '../common/s3-storage.service.js';
+import { paged, pageArgs } from '../common/pagination.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   ListMyTimesheetsQueryDto,
@@ -356,20 +357,44 @@ export class TimesheetsService {
     return count > 0;
   }
 
-  /** Admin list with candidate and project, newest work first. */
+  /** Admin list with candidate and project, newest work first; paged. */
   async listAll(query: ListTimesheetsQueryDto) {
-    const entries = await this.prisma.timesheetEntry.findMany({
-      where: {
-        ...this.dateAndProjectFilter(query),
-        ...(query.status ? { status: query.status } : {}),
-        ...(query.jobId ? { jobId: query.jobId } : {}),
-        ...(query.userId ? { userId: query.userId } : {}),
-      },
-      include: adminEntryInclude,
-      orderBy: [{ workDate: 'desc' }, { createdAt: 'desc' }],
-      take: 500,
-    });
-    return entries.map(toView);
+    const term = query.search?.trim();
+    const where: Prisma.TimesheetEntryWhereInput = {
+      ...this.dateAndProjectFilter(query),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.jobId ? { jobId: query.jobId } : {}),
+      ...(query.userId ? { userId: query.userId } : {}),
+      ...(term
+        ? {
+            OR: [
+              { note: { contains: term, mode: 'insensitive' } },
+              { job: { title: { contains: term, mode: 'insensitive' } } },
+              {
+                user: {
+                  OR: [
+                    { email: { contains: term, mode: 'insensitive' } },
+                    { firstName: { contains: term, mode: 'insensitive' } },
+                    { lastName: { contains: term, mode: 'insensitive' } },
+                  ],
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+    const args = pageArgs(query);
+    const [entries, total] = await this.prisma.$transaction([
+      this.prisma.timesheetEntry.findMany({
+        where,
+        include: adminEntryInclude,
+        orderBy: [{ workDate: 'desc' }, { createdAt: 'desc' }],
+        skip: args.skip,
+        take: args.take,
+      }),
+      this.prisma.timesheetEntry.count({ where }),
+    ]);
+    return paged(entries.map(toView), total, args);
   }
 
   /** Approves or rejects submitted entries; tells each candidate once. */

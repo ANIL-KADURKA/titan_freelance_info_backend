@@ -14,6 +14,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { TimesheetStatus } from '@prisma/client';
+import { PaginationQueryDto } from '../../common/pagination.js';
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -49,7 +50,7 @@ export class SaveTimesheetEntryDto {
   note: string;
 }
 
-export class ListMyTimesheetsQueryDto {
+export class ListMyTimesheetsQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID()
@@ -81,6 +82,13 @@ export class ListTimesheetsQueryDto extends ListMyTimesheetsQueryDto {
   @IsOptional()
   @IsUUID()
   userId?: string;
+
+  @ApiPropertyOptional({ description: 'Candidate name/email, project or note' })
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(200)
+  search?: string;
 }
 
 export class ReviewTimesheetsDto {

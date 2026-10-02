@@ -34,6 +34,7 @@ import { CreateDocumentTypeDto } from './dto/create-document-type.dto.js';
 import { CreateProfileFieldDto } from './dto/create-profile-field.dto.js';
 import { ListApplicationsDto } from './dto/list-applications.dto.js';
 import { UpdateApplicationDto } from './dto/update-application.dto.js';
+import { MyProjectsQueryDto } from './dto/my-projects-query.dto.js';
 import { SelectApplicationDto } from './dto/select-application.dto.js';
 import { UpdateApplicationStatusDto } from './dto/update-application-status.dto.js';
 import { UpdateProfileValuesDto } from './dto/update-profile-values.dto.js';
@@ -60,6 +61,20 @@ export class ApplicationsController {
     };
   }
 
+  @Get('me/projects')
+  @Roles(UserRole.CANDIDATE)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'My Projects: applied / current / completed, paged with counts',
+  })
+  async findMyProjects(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: MyProjectsQueryDto,
+  ) {
+    const data = await this.applicationsService.findMyProjects(user.id, query);
+    return { success: true, data };
+  }
+
   @Get()
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
@@ -77,13 +92,10 @@ export class ApplicationsController {
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Applications of one job, with the job summary and status counts',
+    summary: 'Job summary and per-status application counts',
   })
-  async findForJob(
-    @Param('jobId', ParseUUIDPipe) jobId: string,
-    @Query() query: ListApplicationsDto,
-  ) {
-    const data = await this.applicationsService.findForJob(jobId, query.status);
+  async findForJob(@Param('jobId', ParseUUIDPipe) jobId: string) {
+    const data = await this.applicationsService.findForJob(jobId);
     return {
       success: true,
       message: 'Applications fetched successfully.',
