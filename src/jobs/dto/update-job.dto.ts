@@ -174,11 +174,12 @@ export class UpdateJobDto {
 
   @ApiPropertyOptional({
     example: '2026-10-15T00:00:00.000Z',
-    description: 'Application deadline',
+    description: 'Application deadline; null removes it',
+    nullable: true,
   })
   @IsOptional()
   @IsDateString()
-  applicationDeadline?: string | Date;
+  applicationDeadline?: string | Date | null;
 
   @ApiPropertyOptional({
     example: '2026-10-30T00:00:00.000Z',

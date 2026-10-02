@@ -31,6 +31,23 @@ import { UpdateJobDto } from './dto/update-job.dto.js';
 
 type JobSearchScope = 'admin' | 'public';
 
+/** A new application deadline must be a valid moment in the future. */
+export function assertFutureDeadline(
+  value: string | Date | null | undefined,
+  now = new Date(),
+) {
+  if (!value) return;
+  const deadline = new Date(value);
+  if (Number.isNaN(deadline.getTime())) {
+    throw new BadRequestException('Enter a valid application deadline.');
+  }
+  if (deadline <= now) {
+    throw new BadRequestException(
+      'The application deadline must be in the future.',
+    );
+  }
+}
+
 @Injectable()
 export class JobsService {
   private readonly logger = new Logger(JobsService.name);
@@ -915,6 +932,7 @@ export class JobsService {
 
     await this.ensureUserExists(createdById);
 
+    assertFutureDeadline(dto.applicationDeadline);
     const title = dto.title.trim();
     const slug = this.normalizeSlug(dto.slug ?? title, 'Job');
     await this.assertJobSlugAvailable(slug);
@@ -1037,6 +1055,16 @@ export class JobsService {
 
     if (dto.description !== undefined && !dto.description.trim()) {
       throw new BadRequestException('Job description is required');
+    }
+
+    // Only a changed deadline must be in the future, so jobs whose deadline
+    // has passed can still be edited.
+    if (
+      dto.applicationDeadline &&
+      new Date(dto.applicationDeadline).getTime() !==
+        existing.applicationDeadline?.getTime()
+    ) {
+      assertFutureDeadline(dto.applicationDeadline);
     }
 
     const nextTitle = dto.title?.trim() ?? existing.title;
