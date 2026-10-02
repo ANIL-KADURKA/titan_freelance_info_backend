@@ -88,6 +88,31 @@ enum NotificationType {
   TIMESHEET_SUBMITTED
   TIMESHEET_REVIEWED
   PAYOUT_SENT
+  COMMUNITY_POST
+}
+
+enum AnnouncementStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum AnnouncementType {
+  ANNOUNCEMENT
+  NEW_PROJECT
+}
+
+/// Tag shown on community posts (e.g. "Task update").
+enum AnnouncementCategory {
+  GENERAL
+  TASK_UPDATE
+  PAYMENT_UPDATE
+  PLATFORM_UPDATE
+  EVENT
+}
+
+enum ReactionType {
+  LIKE
+  LOVE
 }
 
 enum TimesheetStatus {
@@ -306,6 +331,8 @@ model User {
   timesheetsReviewed           TimesheetEntry[]           @relation("TimesheetsReviewed")
   payoutsReceived              Payout[]                   @relation("PayoutsReceived")
   payoutsSent                  Payout[]                   @relation("PayoutsSent")
+  announcementsCreated         Announcement[]             @relation("AnnouncementsCreated")
+  announcementReactions        AnnouncementReaction[]     @relation("AnnouncementReactions")
 
   @@index([status])
   @@map("users")
@@ -363,6 +390,7 @@ model Job {
   applications      CandidateApplication[]
   resources         JobResource[]
   timesheetEntries  TimesheetEntry[]
+  announcements     Announcement[]
 
   @@index([status, publishedAt])
   @@index([categoryId])
@@ -521,6 +549,49 @@ model Payout {
 
   @@index([userId, paidAt])
   @@map("payouts")
+}
+
+/// Community feed post: an admin announcement, or a new project posted from
+/// the create-job form. Shown when PUBLISHED and not expired (null = never).
+model Announcement {
+  id          String               @id @default(uuid()) @db.Uuid
+  type        AnnouncementType     @default(ANNOUNCEMENT)
+  category    AnnouncementCategory @default(GENERAL)
+  title       String               @db.VarChar(200)
+  body        String
+  status      AnnouncementStatus   @default(DRAFT)
+  pinned      Boolean              @default(false)
+  expiresAt   DateTime?            @map("expires_at") @db.Timestamptz()
+  publishedAt DateTime?            @map("published_at") @db.Timestamptz()
+  jobId       String?              @map("job_id") @db.Uuid
+  createdById String?              @map("created_by_id") @db.Uuid
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz()
+
+  job       Job?                   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdBy User?                  @relation("AnnouncementsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  reactions AnnouncementReaction[]
+
+  @@index([status, pinned, publishedAt])
+  @@index([expiresAt])
+  @@index([jobId])
+  @@map("announcements")
+}
+
+/// One person's Like or Love on a community post (each can be toggled).
+model AnnouncementReaction {
+  id             String       @id @default(uuid()) @db.Uuid
+  announcementId String       @map("announcement_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  type           ReactionType
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz()
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user         User         @relation("AnnouncementReactions", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId, type])
+  @@index([announcementId, type])
+  @@map("announcement_reactions")
 }
 
 /// In-app notifications (bell + /notifications) for candidates and admins.

@@ -221,3 +221,22 @@ export function payoutSent(
     link: '/payouts',
   };
 }
+
+/** A community post went live (announcement or new project). */
+export function communityPost(post: {
+  title: string;
+  body: string;
+  type: 'ANNOUNCEMENT' | 'NEW_PROJECT';
+  jobSlug?: string | null;
+}): NotificationInput {
+  const preview = post.body.replace(/\s+/g, ' ').trim();
+  return {
+    type: 'COMMUNITY_POST',
+    title: post.type === 'NEW_PROJECT' ? post.title : `📣 ${post.title}`,
+    message: preview.length > 160 ? `${preview.slice(0, 159)}…` : preview,
+    link:
+      post.type === 'NEW_PROJECT' && post.jobSlug
+        ? `/jobs/${post.jobSlug}`
+        : '/community',
+  };
+}
