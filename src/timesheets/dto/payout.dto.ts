@@ -8,6 +8,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { PayCurrency } from '@prisma/client';
+import { PaginationQueryDto } from '../../common/pagination.js';
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
@@ -45,7 +46,7 @@ export class CreatePayoutDto {
   paymentMethodId?: string;
 }
 
-export class ListPayoutsQueryDto {
+export class ListPayoutsQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID()

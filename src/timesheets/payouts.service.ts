@@ -20,6 +20,12 @@ import {
 } from '../notifications/notification-messages.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { PaymentDataCipher } from '../payment-methods/payment-data-cipher.js';
+import {
+  type PaginationQueryDto,
+  paged,
+  pageArgs,
+  pageArray,
+} from '../common/pagination.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { formatDateKey, formatMoney } from './timesheet-rules.js';
 
@@ -59,7 +65,7 @@ export class PayoutsService {
    * Who is owed what: approved, unpaid entries grouped by candidate and
    * currency, with their verified payout methods (full details, for paying).
    */
-  async pending() {
+  async pending(query: PaginationQueryDto = {}) {
     const entries = await this.prisma.timesheetEntry.findMany({
       where: { status: TimesheetStatus.APPROVED, payoutId: null },
       select: {
@@ -102,11 +108,17 @@ export class PayoutsService {
       group.projects.add(entry.job.title);
       groups.set(key, group);
     }
-    if (!groups.size) return [];
+    if (!groups.size) return { ...pageArray([], query), totals: {} };
+    // Total owed across every page, per currency (for the header).
+    const totals: Partial<Record<PayCurrency, number>> = {};
+    for (const group of groups.values()) {
+      totals[group.currency] =
+        Math.round(((totals[group.currency] ?? 0) + group.amount) * 100) / 100;
+    }
+    // Only the current page needs candidate and payout-method lookups.
+    const pageGroups = pageArray([...groups.values()], query);
 
-    const userIds = [
-      ...new Set([...groups.values()].map((group) => group.userId)),
-    ];
+    const userIds = [...new Set(pageGroups.data.map((group) => group.userId))];
     const [users, methods] = await Promise.all([
       this.prisma.user.findMany({
         where: { id: { in: userIds } },
@@ -123,7 +135,7 @@ export class PayoutsService {
     ]);
     const usersById = new Map(users.map((user) => [user.id, user]));
 
-    return [...groups.values()].map((group) => ({
+    const data = pageGroups.data.map((group) => ({
       ...group,
       projects: [...group.projects],
       candidate: usersById.get(group.userId) ?? null,
@@ -131,6 +143,7 @@ export class PayoutsService {
         .filter((method) => method.userId === group.userId)
         .map((method) => this.methodDetails(method)),
     }));
+    return { ...pageGroups, data, totals };
   }
 
   /**
@@ -245,27 +258,47 @@ export class PayoutsService {
     }
   }
 
-  async listAll(userId?: string) {
-    const payouts = await this.prisma.payout.findMany({
-      where: userId ? { userId } : {},
-      include: {
-        user: { select: personSelect },
-        paidBy: { select: personSelect },
-        _count: { select: { entries: true } },
-      },
-      orderBy: { paidAt: 'desc' },
-      take: 200,
-    });
-    return payouts.map((payout) => this.toView(payout));
+  async listAll(userId?: string, query: PaginationQueryDto = {}) {
+    const where = userId ? { userId } : {};
+    const args = pageArgs(query);
+    const [payouts, total] = await this.prisma.$transaction([
+      this.prisma.payout.findMany({
+        where,
+        include: {
+          user: { select: personSelect },
+          paidBy: { select: personSelect },
+          _count: { select: { entries: true } },
+        },
+        orderBy: { paidAt: 'desc' },
+        skip: args.skip,
+        take: args.take,
+      }),
+      this.prisma.payout.count({ where }),
+    ]);
+    return paged(
+      payouts.map((payout) => this.toView(payout)),
+      total,
+      args,
+    );
   }
 
-  async listMine(userId: string) {
-    const payouts = await this.prisma.payout.findMany({
-      where: { userId },
-      include: { _count: { select: { entries: true } } },
-      orderBy: { paidAt: 'desc' },
-    });
-    return payouts.map((payout) => this.toView(payout));
+  async listMine(userId: string, query: PaginationQueryDto = {}) {
+    const args = pageArgs(query);
+    const [payouts, total] = await this.prisma.$transaction([
+      this.prisma.payout.findMany({
+        where: { userId },
+        include: { _count: { select: { entries: true } } },
+        orderBy: { paidAt: 'desc' },
+        skip: args.skip,
+        take: args.take,
+      }),
+      this.prisma.payout.count({ where: { userId } }),
+    ]);
+    return paged(
+      payouts.map((payout) => this.toView(payout)),
+      total,
+      args,
+    );
   }
 
   /** Signed link to the payment proof: the candidate paid, or staff. */

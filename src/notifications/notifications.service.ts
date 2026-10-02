@@ -1,7 +1,9 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { type Notification, NotificationType, RoleName } from '@prisma/client';
 import { filter, type Observable, Subject } from 'rxjs';
+import { paged, pageArgs } from '../common/pagination.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import type { NotificationsQueryDto } from './dto/notifications-query.dto.js';
 
 export type NotificationInput = {
   type: NotificationType;
@@ -10,8 +12,6 @@ export type NotificationInput = {
   /** In-app path, e.g. /projects/applied */
   link?: string | null;
 };
-
-const LIST_LIMIT = 50;
 
 @Injectable()
 export class NotificationsService {
@@ -80,16 +80,25 @@ export class NotificationsService {
     }
   }
 
-  async listMine(userId: string) {
-    const [items, unreadCount] = await Promise.all([
+  /** A page of my notifications (newest first) plus the unread count. */
+  async listMine(userId: string, query: NotificationsQueryDto = {}) {
+    const where = {
+      userId,
+      ...(query.unread === 'true' ? { readAt: null } : {}),
+    };
+    const args = pageArgs(query);
+    const [items, total, unreadCount] = await this.prisma.$transaction([
       this.prisma.notification.findMany({
-        where: { userId },
+        where,
         orderBy: { createdAt: 'desc' },
-        take: LIST_LIMIT,
+        skip: args.skip,
+        take: args.take,
       }),
+      this.prisma.notification.count({ where }),
       this.prisma.notification.count({ where: { userId, readAt: null } }),
     ]);
-    return { items, unreadCount };
+    // `items` (not `data`): the bell's cache and live updates use this name.
+    return { items, unreadCount, meta: paged([], total, args).meta };
   }
 
   async markRead(userId: string, id: string) {

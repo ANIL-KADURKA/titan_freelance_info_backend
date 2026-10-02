@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { AccountStatus, RoleName } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { paged, pageArgs } from '../common/pagination.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateAddressDto, UpdateAddressDto } from './dto/address.dto.js';
 import { CreateEducationDto, UpdateEducationDto } from './dto/education.dto.js';
@@ -295,8 +296,11 @@ export class UserService {
       role?: string;
       search?: string;
       includeSummary?: boolean;
+      page?: number;
+      pageSize?: number;
     } = {},
   ) {
+    const pageInfo = pageArgs(filters);
     const where: Record<string, unknown> = {};
 
     if (filters.status) {
@@ -324,30 +328,35 @@ export class UserService {
       ];
     }
 
-    const users = await this.prisma.user.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        email: true,
-        personalEmail: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        status: true,
-        createdAt: true,
-        updatedAt: true,
-        roles: {
-          select: {
-            role: {
-              select: {
-                name: true,
+    const [users, total] = await this.prisma.$transaction([
+      this.prisma.user.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: pageInfo.skip,
+        take: pageInfo.take,
+        select: {
+          id: true,
+          email: true,
+          personalEmail: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
+          roles: {
+            select: {
+              role: {
+                select: {
+                  name: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      }),
+      this.prisma.user.count({ where }),
+    ]);
 
     const mappedUsers = users.map((user) => {
       const roles = user.roles.map((entry) => entry.role.name);
@@ -376,20 +385,24 @@ export class UserService {
       };
     });
 
+    const page = paged(mappedUsers, total, pageInfo);
     if (!filters.includeSummary) {
-      return mappedUsers;
+      return page;
     }
 
+    // Counts per status ignore the status filter, so every tab shows a number.
+    const { status: _status, ...summaryWhere } = where;
+    void _status;
     const summaryRows = await this.prisma.user.groupBy({
       by: ['status'],
-      where: Object.keys(where).length > 0 ? where : undefined,
+      where: Object.keys(summaryWhere).length > 0 ? summaryWhere : undefined,
       _count: {
         status: true,
       },
     });
 
     const summary = {
-      total: mappedUsers.length,
+      total: summaryRows.reduce((sum, row) => sum + row._count.status, 0),
       active:
         summaryRows.find((row) => row.status === AccountStatus.ACTIVE)?._count
           .status ?? 0,
@@ -405,10 +418,7 @@ export class UserService {
           ?._count.status ?? 0,
     };
 
-    return {
-      users: mappedUsers,
-      summary,
-    };
+    return { ...page, summary };
   }
 
   async updateUserStatus(userId: string, status: string) {

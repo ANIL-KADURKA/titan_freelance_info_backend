@@ -23,6 +23,7 @@ import { Roles } from '../auth/roles.decorator.js';
 import { UserRole } from '../auth/roles.enum.js';
 import { RolesGuard } from '../auth/roles.guard.js';
 import type { UploadedDocument } from '../common/document-validation.service.js';
+import { PaginationQueryDto } from '../common/pagination.js';
 import { CreatePayoutDto, ListPayoutsQueryDto } from './dto/payout.dto.js';
 import { PayoutsService } from './payouts.service.js';
 
@@ -38,22 +39,25 @@ export class PayoutsController {
   @Get('pending')
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiOperation({ summary: 'Amounts owed per candidate and currency' })
-  pending() {
-    return this.payouts.pending();
+  pending(@Query() query: PaginationQueryDto) {
+    return this.payouts.pending(query);
   }
 
   @Get('me')
   @Roles(UserRole.CANDIDATE)
   @ApiOperation({ summary: 'My payout history' })
-  listMine(@CurrentUser() user: AuthenticatedUser) {
-    return this.payouts.listMine(user.id);
+  listMine(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.payouts.listMine(user.id, query);
   }
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.RECRUITER)
   @ApiOperation({ summary: 'Payout history' })
   listAll(@Query() query: ListPayoutsQueryDto) {
-    return this.payouts.listAll(query.userId);
+    return this.payouts.listAll(query.userId, query);
   }
 
   @Post()
