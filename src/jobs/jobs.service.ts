@@ -1318,6 +1318,17 @@ export class JobsService {
         return [{ title: 'desc' }];
       case JobSearchSort.OPENINGS_HIGH:
         return [{ openings: 'desc' }, { createdAt: 'desc' }];
+      // Jobs without a pay amount go last either way.
+      case JobSearchSort.PAY_HIGH:
+        return [
+          { payAmount: { sort: 'desc', nulls: 'last' } },
+          { createdAt: 'desc' },
+        ];
+      case JobSearchSort.PAY_LOW:
+        return [
+          { payAmount: { sort: 'asc', nulls: 'last' } },
+          { createdAt: 'desc' },
+        ];
       case JobSearchSort.NEWEST:
       default:
         return [{ createdAt: 'desc' }];

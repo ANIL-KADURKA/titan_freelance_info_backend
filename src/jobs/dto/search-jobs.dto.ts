@@ -11,6 +11,8 @@ export enum JobSearchSort {
   TITLE_ASC = 'titleAsc',
   TITLE_DESC = 'titleDesc',
   OPENINGS_HIGH = 'openingsHigh',
+  PAY_HIGH = 'payHigh',
+  PAY_LOW = 'payLow',
 }
 
 export class SearchJobsDto {
