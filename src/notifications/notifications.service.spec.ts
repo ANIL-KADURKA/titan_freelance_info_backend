@@ -19,12 +19,12 @@ describe('NotificationsService', () => {
   });
 
   it('notifies every admin and recruiter in one insert', async () => {
-    const createMany = vi.fn().mockResolvedValue({ count: 2 });
+    const createManyAndReturn = vi.fn(({ data }) => Promise.resolve(data));
     const prisma = {
       user: {
         findMany: vi.fn().mockResolvedValue([{ id: 'a1' }, { id: 'a2' }]),
       },
-      notification: { createMany },
+      notification: { createManyAndReturn },
     } as unknown as PrismaService;
     await new NotificationsService(prisma).notifyAdmins({
       type: 'APPLICATION_RECEIVED',
@@ -32,7 +32,7 @@ describe('NotificationsService', () => {
       message: 'Ravi applied',
       link: '/admin/applications/1',
     });
-    expect(createMany).toHaveBeenCalledWith({
+    expect(createManyAndReturn).toHaveBeenCalledWith({
       data: [
         expect.objectContaining({
           userId: 'a1',
@@ -41,6 +41,26 @@ describe('NotificationsService', () => {
         expect.objectContaining({ userId: 'a2' }),
       ],
     });
+  });
+
+  it('streams new notifications only to their owner', async () => {
+    const prisma = {
+      notification: {
+        create: vi.fn(({ data }) =>
+          Promise.resolve({ id: `n-${data.userId}`, ...data }),
+        ),
+      },
+    } as unknown as PrismaService;
+    const service = new NotificationsService(prisma);
+    const received: string[] = [];
+    const subscription = service
+      .streamFor('u1')
+      .subscribe((notification) => received.push(notification.id));
+    const input = { type: 'WELCOME' as const, title: 'Hi', message: 'Hello' };
+    await service.notifyUser('u1', input);
+    await service.notifyUser('u2', input);
+    subscription.unsubscribe();
+    expect(received).toEqual(['n-u1']);
   });
 
   it('skips statuses candidates do not need to hear about', () => {

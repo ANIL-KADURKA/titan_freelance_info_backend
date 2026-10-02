@@ -63,7 +63,12 @@ async function bootstrap() {
 
       callback(new Error(`Origin ${origin} is not allowed by CORS`), false);
     },
-    allowedHeaders: ['Authorization', 'Content-Type'],
+    // ngrok header: the frontend's direct SSE connection sends it too.
+    allowedHeaders: [
+      'Authorization',
+      'Content-Type',
+      'ngrok-skip-browser-warning',
+    ],
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     optionsSuccessStatus: 204,
     credentials: true,
