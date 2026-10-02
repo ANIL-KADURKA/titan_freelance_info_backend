@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { NotificationType, RoleName } from '@prisma/client';
+import { type Notification, NotificationType, RoleName } from '@prisma/client';
+import { filter, type Observable, Subject } from 'rxjs';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 export type NotificationInput = {
@@ -16,7 +17,21 @@ const LIST_LIMIT = 50;
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
+  /**
+   * In-process feed of new notifications, for the SSE stream. With several
+   * backend instances each one only sees its own; clients also poll as a
+   * fallback, so nothing is missed.
+   */
+  private readonly created = new Subject<Notification>();
+
   constructor(private readonly prisma: PrismaService) {}
+
+  /** New notifications for one user, as they are created. */
+  streamFor(userId: string): Observable<Notification> {
+    return this.created.pipe(
+      filter((notification) => notification.userId === userId),
+    );
+  }
 
   /**
    * Fire-and-forget: a failed notification is logged, never thrown, so it
@@ -24,9 +39,10 @@ export class NotificationsService {
    */
   async notifyUser(userId: string, input: NotificationInput) {
     try {
-      await this.prisma.notification.create({
+      const notification = await this.prisma.notification.create({
         data: { userId, ...input, link: input.link ?? null },
       });
+      this.created.next(notification);
     } catch (error) {
       this.logger.warn(
         `Notification failed | userId=${userId} | type=${input.type} | error=${error instanceof Error ? error.message : String(error)}`,
@@ -49,13 +65,14 @@ export class NotificationsService {
         select: { id: true },
       });
       if (!staff.length) return;
-      await this.prisma.notification.createMany({
+      const notifications = await this.prisma.notification.createManyAndReturn({
         data: staff.map((user) => ({
           userId: user.id,
           ...input,
           link: input.link ?? null,
         })),
       });
+      for (const notification of notifications) this.created.next(notification);
     } catch (error) {
       this.logger.warn(
         `Admin notification failed | type=${input.type} | error=${error instanceof Error ? error.message : String(error)}`,
