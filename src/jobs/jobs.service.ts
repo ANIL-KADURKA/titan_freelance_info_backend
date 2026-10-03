@@ -17,6 +17,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { newProjectAnnouncement } from '../community/announcement-rules.js';
 import { communityPost } from '../notifications/notification-messages.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { JobPreApplicationsService } from './job-pre-applications.service.js';
 import { JobResourcesService } from './job-resources.service.js';
 import { UserRole } from '../auth/roles.enum.js';
 import { CreateJobApplicationFieldDto } from './dto/create-job-application-field.dto.js';
@@ -56,6 +57,7 @@ export class JobsService {
     private readonly prisma: PrismaService,
     private readonly jobResourcesService: JobResourcesService,
     private readonly notifications: NotificationsService,
+    private readonly preApplications: JobPreApplicationsService,
   ) {}
 
   /**
@@ -963,6 +965,8 @@ export class JobsService {
       status: dto.status ?? JobStatus.DRAFT,
       publishedAt: dto.publishedAt ?? null,
       applicationDeadline: dto.applicationDeadline ?? null,
+      preApplyDeadline: dto.preApplyDeadline ?? null,
+      preApplyBonus: dto.preApplyBonus ?? null,
       closedAt: dto.closedAt ?? null,
     };
 
@@ -1128,6 +1132,9 @@ export class JobsService {
         dto.applicationDeadline !== undefined
           ? dto.applicationDeadline
           : existing.applicationDeadline,
+      // undefined keeps the value; null clears it.
+      preApplyDeadline: dto.preApplyDeadline,
+      preApplyBonus: dto.preApplyBonus,
       closedAt: nextClosedAt,
     };
 
@@ -1158,7 +1165,7 @@ export class JobsService {
     this.logger.log(`Updating job: ${id}`);
 
     try {
-      return await this.prisma.job.update({
+      const updated = await this.prisma.job.update({
         where: { id },
         data: {
           ...data,
@@ -1176,6 +1183,14 @@ export class JobsService {
           },
         },
       });
+      // Upcoming → published: tell everyone who pre-applied.
+      if (
+        existing.status === JobStatus.UPCOMING &&
+        updated.status === JobStatus.PUBLISHED
+      ) {
+        await this.preApplications.notifyOpened(updated);
+      }
+      return updated;
     } catch (error) {
       this.rethrowUniqueConstraint(
         error,

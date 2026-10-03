@@ -354,3 +354,14 @@ export function supportTicketStatusChanged(
     link: `/support/${ticketId}`,
   };
 }
+
+/** To candidates who pre-applied, when an upcoming job opens. */
+export function jobOpened(title: string, jobId: string): NotificationInput {
+  return {
+    type: 'JOB_OPENED',
+    title: `${title} is open 🎉`,
+    message:
+      'You pre-applied for this project. Applications are open now — apply to secure your spot.',
+    link: `/jobs/${jobId}`,
+  };
+}

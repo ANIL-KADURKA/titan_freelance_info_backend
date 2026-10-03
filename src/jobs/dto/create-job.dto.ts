@@ -202,6 +202,23 @@ export class CreateJobDto {
   applicationDeadline?: string | Date;
 
   @ApiPropertyOptional({
+    example: '2026-08-10T00:00:00.000Z',
+    description: 'Upcoming jobs: pre-apply by this date for the bonus',
+  })
+  @IsOptional()
+  @IsDateString()
+  preApplyDeadline?: string | Date | null;
+
+  @ApiPropertyOptional({
+    example: 50,
+    description: 'Upcoming jobs: extra INR for pre-applying in time',
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  preApplyBonus?: number | null;
+
+  @ApiPropertyOptional({
     example: '2026-10-30T00:00:00.000Z',
     description: 'Closed at date',
   })

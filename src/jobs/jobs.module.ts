@@ -5,6 +5,11 @@ import {
   DraftJobResourcesController,
   JobResourcesController,
 } from './job-resources.controller.js';
+import {
+  JobPreApplicationsController,
+  PublicUpcomingJobsController,
+} from './job-pre-applications.controller.js';
+import { JobPreApplicationsService } from './job-pre-applications.service.js';
 import { JobResourcesService } from './job-resources.service.js';
 import { JobsController } from './jobs.controller.js';
 import { JobsService } from './jobs.service.js';
@@ -17,8 +22,10 @@ import { PublicJobsController } from './public-jobs.controller.js';
     PublicJobsController,
     JobResourcesController,
     DraftJobResourcesController,
+    PublicUpcomingJobsController,
+    JobPreApplicationsController,
   ],
-  providers: [JobsService, JobResourcesService],
+  providers: [JobsService, JobResourcesService, JobPreApplicationsService],
   exports: [JobsService],
 })
 export class JobsModule {}
