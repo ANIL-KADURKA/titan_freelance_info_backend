@@ -1,6 +1,19 @@
 /** Pure helpers for case studies. */
 
-/** "From Applicant to AI Trainer!" → "from-applicant-to-ai-trainer" */
+export type CaseStudyStat = { value: string; label: string };
+export type CaseStudyBreakdownRow = {
+  code: string;
+  text: string;
+  value: string;
+};
+export type CaseStudyResult = { value: string; label: string; note?: string };
+export type CaseStudyProject = {
+  name: string;
+  problem: string;
+  approach: string;
+};
+
+/** "Hindi RLHF at Scale!" → "hindi-rlhf-at-scale" */
 export function slugify(value: string) {
   return value
     .toLowerCase()
@@ -11,26 +24,30 @@ export function slugify(value: string) {
     .slice(0, 150);
 }
 
-/** "3 months", "1 year 2 months", "2 weeks" between two dates. */
-export function describeDuration(from: Date, to: Date) {
-  const days = Math.max(
-    0,
-    Math.floor((to.getTime() - from.getTime()) / 86_400_000),
-  );
-  if (days < 30) {
-    const weeks = Math.max(1, Math.round(days / 7));
-    return `${weeks} week${weeks === 1 ? '' : 's'}`;
-  }
-  const months = Math.round(days / 30.44);
-  const years = Math.floor(months / 12);
-  const rest = months % 12;
-  const parts = [];
-  if (years) parts.push(`${years} year${years === 1 ? '' : 's'}`);
-  if (rest) parts.push(`${rest} month${rest === 1 ? '' : 's'}`);
-  return parts.join(' ') || '1 month';
-}
+type PublishCheck = {
+  isUpcoming: boolean;
+  problemTitle?: string | null;
+  problemBody?: string | null;
+  approachTitle?: string | null;
+  approachBody?: string | null;
+  projects: unknown[];
+  results: unknown[];
+};
 
-/** "₹1,25,000" */
-export function formatInr(amount: number) {
-  return `₹${Math.round(amount).toLocaleString('en-IN')}`;
+/**
+ * What a full case study still needs before it can go live: the story (a
+ * problem and an approach, or project cards) and at least one result.
+ * Upcoming ones are only a placeholder card, so title and summary are enough.
+ */
+export function missingForPublish(study: PublishCheck): string[] {
+  if (study.isUpcoming) return [];
+  const missing: string[] = [];
+  const hasProblem = Boolean(study.problemTitle || study.problemBody);
+  const hasApproach = Boolean(study.approachTitle || study.approachBody);
+  if (study.projects.length === 0) {
+    if (!hasProblem) missing.push('the problem');
+    if (!hasApproach) missing.push('the approach');
+  }
+  if (study.results.length === 0) missing.push('at least one result');
+  return missing;
 }
