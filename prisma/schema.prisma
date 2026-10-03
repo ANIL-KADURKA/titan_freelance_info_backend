@@ -351,7 +351,6 @@ model User {
   agreementsCreated            Agreement[]                @relation("AgreementsCreated")
   testimonial                  Testimonial?               @relation("TestimonialAuthor")
   testimonialsReviewed         Testimonial[]              @relation("TestimonialReviewer")
-  caseStudies                  CaseStudy[]                @relation("CaseStudySubject")
   caseStudiesCreated           CaseStudy[]                @relation("CaseStudiesCreated")
   announcementReactions        AnnouncementReaction[]     @relation("AnnouncementReactions")
 
@@ -412,7 +411,6 @@ model Job {
   resources         JobResource[]
   timesheetEntries  TimesheetEntry[]
   announcements     Announcement[]
-  caseStudies       CaseStudy[]
 
   @@index([status, publishedAt])
   @@index([categoryId])
@@ -933,7 +931,7 @@ model FileObject {
   uploadedBy                User?                      @relation("UploadedByUser", fields: [uploadedById], references: [id])
   testimonials              Testimonial[]              @relation("TestimonialPhoto")
   testimonialPendingPhotos  Testimonial[]              @relation("TestimonialPendingPhoto")
-  caseStudyPhotos           CaseStudy[]                @relation("CaseStudyPhoto")
+  caseStudyCovers           CaseStudy[]                @relation("CaseStudyCover")
   applicationDocuments      JobApplicationDocument[]
   candidateProfileDocuments CandidateProfileDocument[]
   jobResources              JobResource[]
@@ -1007,37 +1005,49 @@ model Testimonial {
 
 /// Long-form success stories, written and published by admins.
 model CaseStudy {
-  id                String        @id @default(uuid()) @db.Uuid
-  slug              String        @unique @db.VarChar(160)
-  title             String        @db.VarChar(200)
-  summary           String        @db.VarChar(500)
-  personName        String        @map("person_name") @db.VarChar(120)
-  personRole        String?       @map("person_role") @db.VarChar(120)
-  photoId           String?       @map("photo_id") @db.Uuid
-  /// Optional links for admins (stats auto-fill); never shown publicly.
-  userId            String?       @map("user_id") @db.Uuid
-  jobId             String?       @map("job_id") @db.Uuid
-  background        String
-  howItBegan        String        @map("how_it_began")
-  gettingSelected   String        @map("getting_selected")
-  findingFooting    String        @map("finding_footing")
-  hardParts         String        @map("hard_parts")
-  support           String
-  outcome           String
-  durationText      String?       @map("duration_text") @db.VarChar(60)
-  earningsText      String?       @map("earnings_text")
-  consentRecordedAt DateTime?     @map("consent_recorded_at") @db.Timestamptz()
-  status            PublishStatus @default(DRAFT)
-  publishedAt       DateTime?     @map("published_at") @db.Timestamptz()
-  sortOrder         Int           @default(0) @map("sort_order")
-  createdById       String?       @map("created_by_id") @db.Uuid
-  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz()
+  id             String        @id @default(uuid()) @db.Uuid
+  slug           String        @unique @db.VarChar(160)
+  /// Kind of project, shown as "CASE 01 · RLHF".
+  category       String        @db.VarChar(60)
+  /// Highlighted chip, e.g. "Hindi" or "5 languages".
+  focusTag       String?       @map("focus_tag") @db.VarChar(60)
+  /// e.g. "2025 · Q4".
+  period         String?       @db.VarChar(40)
+  /// Who it was for, e.g. "Foundation lab".
+  clientLabel    String?       @map("client_label") @db.VarChar(80)
+  title          String        @db.VarChar(200)
+  summary        String        @db.VarChar(500)
+  coverId        String?       @map("cover_id") @db.Uuid
+  /// Image link (https://… or a site path like /images/…), used when no cover is uploaded.
+  imageUrl       String?       @map("image_url") @db.VarChar(500)
+  /// Headline numbers: [{ value, label }], up to 4.
+  stats          Json          @default("[]")
+  /// Sub-projects shown as cards: [{ name, problem, approach }].
+  projects       Json          @default("[]")
+  problemTitle   String?       @map("problem_title") @db.VarChar(200)
+  problemBody    String?       @map("problem_body")
+  approachTitle  String?       @map("approach_title") @db.VarChar(200)
+  approachBody   String?       @map("approach_body")
+  /// Optional table, e.g. "4-layer QA breakdown": [{ code, text, value }].
+  breakdownTitle String?       @map("breakdown_title") @db.VarChar(80)
+  breakdown      Json          @default("[]")
+  /// Defaults to "Results" on the page.
+  resultsTitle   String?       @map("results_title") @db.VarChar(80)
+  /// [{ value, label, note }], up to 4.
+  results        Json          @default("[]")
+  quote          String?
+  quoteAuthor    String?       @map("quote_author") @db.VarChar(160)
+  /// Shown as a "next case study loading…" placeholder, not the full story.
+  isUpcoming     Boolean       @default(false) @map("is_upcoming")
+  status         PublishStatus @default(DRAFT)
+  publishedAt    DateTime?     @map("published_at") @db.Timestamptz()
+  sortOrder      Int           @default(0) @map("sort_order")
+  createdById    String?       @map("created_by_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz()
 
-  photo     FileObject? @relation("CaseStudyPhoto", fields: [photoId], references: [id], onDelete: SetNull)
-  user      User?       @relation("CaseStudySubject", fields: [userId], references: [id], onDelete: SetNull)
-  job       Job?        @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  cover     FileObject? @relation("CaseStudyCover", fields: [coverId], references: [id], onDelete: SetNull)
   createdBy User?       @relation("CaseStudiesCreated", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([status, sortOrder])

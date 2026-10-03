@@ -7,7 +7,6 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
-  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -26,11 +25,7 @@ import { UserRole } from '../auth/roles.enum.js';
 import { RolesGuard } from '../auth/roles.guard.js';
 import type { UploadedDocument } from '../common/document-validation.service.js';
 import { CaseStudiesService } from './case-studies.service.js';
-import {
-  CaseStudyDto,
-  CaseStudyStatsQueryDto,
-  UpdateCaseStudyDto,
-} from './dto/case-study.dto.js';
+import { CaseStudyDto, UpdateCaseStudyDto } from './dto/case-study.dto.js';
 
 type AuthenticatedUser = { id: string };
 
@@ -66,12 +61,6 @@ export class CaseStudiesController {
     return this.caseStudies.list();
   }
 
-  @Get('stats')
-  @ApiOperation({ summary: 'Suggested name, role, duration and earnings' })
-  stats(@Query() query: CaseStudyStatsQueryDto) {
-    return this.caseStudies.stats(query.userId);
-  }
-
   @Get(':id')
   @ApiOperation({ summary: 'One case study' })
   findOne(@Param('id', ParseUUIDPipe) id: string) {
@@ -79,7 +68,7 @@ export class CaseStudiesController {
   }
 
   @Post()
-  @UseInterceptors(FileInterceptor('photo'))
+  @UseInterceptors(FileInterceptor('cover'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Create a case study' })
   create(
@@ -91,7 +80,7 @@ export class CaseStudiesController {
   }
 
   @Patch(':id')
-  @UseInterceptors(FileInterceptor('photo'))
+  @UseInterceptors(FileInterceptor('cover'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Edit, publish or unpublish a case study' })
   update(

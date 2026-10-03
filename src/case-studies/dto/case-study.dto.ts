@@ -1,17 +1,19 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { PublishStatus } from '@prisma/client';
-import { Transform, Type } from 'class-transformer';
+import { plainToInstance, Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
-  IsUUID,
   Matches,
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 
 const trim = ({ value }: { value: unknown }) =>
@@ -20,26 +22,123 @@ const trim = ({ value }: { value: unknown }) =>
 const blank = ({ value }: { value: unknown }) =>
   value === '' || value === 'null' ? undefined : value;
 /** "" means "clear it" (null); a missing field means "leave it". */
-const clearable = ({ value }: { value: unknown }) =>
-  value === '' || value === 'null' ? null : value;
+const clearable = ({ value }: { value: unknown }) => {
+  if (value === '' || value === 'null') return null;
+  return typeof value === 'string' ? value.trim() : value;
+};
 const bool = ({ value }: { value: unknown }) =>
   value === true || value === 'true';
-
-const section = (example: string) =>
-  function SectionField(target: object, key: string) {
-    ApiProperty({ example })(target, key);
-    Transform(trim)(target, key);
-    IsString()(target, key);
-    MinLength(10)(target, key);
-    MaxLength(4000)(target, key);
+/**
+ * Lists arrive as JSON strings in multipart forms. Rows become instances of
+ * `rowClass` so the whitelist and nested validation know their fields.
+ */
+const jsonListOf =
+  <T>(rowClass: new () => T) =>
+  ({ value }: { value: unknown }) => {
+    let rows = value;
+    if (typeof rows === 'string') {
+      try {
+        rows = JSON.parse(rows) as unknown;
+      } catch {
+        return value; // IsArray reports it.
+      }
+    }
+    return Array.isArray(rows)
+      ? rows.map((row: unknown) =>
+          row && typeof row === 'object' ? plainToInstance(rowClass, row) : row,
+        )
+      : rows;
   };
 
-/** Case study form (multipart; optional `photo`). */
-export class CaseStudyDto {
-  @ApiProperty({ example: 'From applicant to Telugu AI trainer' })
+/** Optional short text that can be cleared. */
+function OptionalText(max: number, example: string) {
+  return function OptionalTextField(target: object, key: string) {
+    ApiPropertyOptional({ example })(target, key);
+    IsOptional()(target, key);
+    Transform(clearable)(target, key);
+    IsString()(target, key);
+    MaxLength(max)(target, key);
+  };
+}
+
+export class CaseStudyStatDto {
   @Transform(trim)
   @IsString()
-  @MinLength(5)
+  @MinLength(1)
+  @MaxLength(20)
+  value: string;
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(40)
+  label: string;
+}
+
+export class CaseStudyBreakdownRowDto {
+  @Transform(trim)
+  @IsString()
+  @MaxLength(8)
+  code: string;
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  text: string;
+
+  @Transform(trim)
+  @IsString()
+  @MaxLength(20)
+  value: string;
+}
+
+export class CaseStudyResultDto {
+  @Transform(trim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(20)
+  value: string;
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(60)
+  label: string;
+
+  @IsOptional()
+  @Transform(trim)
+  @IsString()
+  @MaxLength(80)
+  note?: string;
+}
+
+export class CaseStudyProjectDto {
+  @Transform(trim)
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  name: string;
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(1000)
+  problem: string;
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(1000)
+  approach: string;
+}
+
+/** Case study form (multipart; optional `cover` image). */
+export class CaseStudyDto {
+  @ApiProperty({ example: 'Hindi RLHF at Scale' })
+  @Transform(trim)
+  @IsString()
+  @MinLength(3)
   @MaxLength(200)
   title: string;
 
@@ -53,90 +152,117 @@ export class CaseStudyDto {
   @MaxLength(150)
   slug?: string;
 
-  @ApiProperty({ description: 'One or two lines shown on the story card' })
+  @ApiProperty({ example: 'RLHF', description: 'Shown as "CASE 01 · RLHF"' })
+  @Transform(trim)
+  @IsString()
+  @MinLength(2)
+  @MaxLength(60)
+  category: string;
+
+  @ApiProperty({ description: 'One or two lines under the title' })
   @Transform(trim)
   @IsString()
   @MinLength(10)
   @MaxLength(500)
   summary: string;
 
-  @ApiProperty({ example: 'Asha Rao' })
-  @Transform(trim)
-  @IsString()
-  @MinLength(2)
-  @MaxLength(120)
-  personName: string;
+  @OptionalText(60, 'Hindi')
+  focusTag?: string | null;
 
-  @ApiPropertyOptional({ example: 'AI Trainer · Telugu' })
-  @IsOptional()
-  @Transform(clearable)
-  @Transform(trim)
-  @IsString()
-  @MaxLength(120)
-  personRole?: string | null;
-
-  @ApiPropertyOptional({ description: 'Linked candidate (admin only)' })
-  @IsOptional()
-  @Transform(clearable)
-  @IsUUID()
-  userId?: string | null;
-
-  @ApiPropertyOptional({ description: 'Linked project (admin only)' })
-  @IsOptional()
-  @Transform(clearable)
-  @IsUUID()
-  jobId?: string | null;
-
-  @section('Asha was teaching part-time and looking for remote work.')
-  background: string;
-
-  @section('She found Titan through a friend and applied in one evening.')
-  howItBegan: string;
-
-  @section('After a short call she was selected for the Telugu project.')
-  gettingSelected: string;
-
-  @section('The first week was about learning the guidelines.')
-  findingFooting: string;
-
-  @section('Some tasks were rejected early on for quality reasons.')
-  hardParts: string;
-
-  @section('Her reviewer shared examples and she improved quickly.')
-  support: string;
-
-  @section('Six months later she leads a small review group.')
-  outcome: string;
-
-  @ApiPropertyOptional({ example: '6 months' })
-  @IsOptional()
-  @Transform(clearable)
-  @Transform(trim)
-  @IsString()
-  @MaxLength(60)
-  durationText?: string | null;
-
-  @ApiPropertyOptional({ example: '₹1,20,000 earned across 24 payouts' })
-  @IsOptional()
-  @Transform(clearable)
-  @Transform(trim)
-  @IsString()
-  @MaxLength(1000)
-  earningsText?: string | null;
+  @OptionalText(40, '2025 · Q4')
+  period?: string | null;
 
   @ApiPropertyOptional({
-    description: 'Candidate agreed (offline) to have this story shared',
+    example: 'https://example.com/cover.webp',
+    description: 'Image link used when no cover is uploaded',
+  })
+  @IsOptional()
+  @Transform(clearable)
+  @IsString()
+  @MaxLength(500)
+  @Matches(/^(https:\/\/|\/)\S+$/, {
+    message: 'Use an https:// link or a site path starting with /.',
+  })
+  imageUrl?: string | null;
+
+  @OptionalText(80, 'Foundation lab')
+  clientLabel?: string | null;
+
+  @ApiPropertyOptional({ type: [CaseStudyStatDto], description: 'Up to 4' })
+  @IsOptional()
+  @Transform(jsonListOf(CaseStudyStatDto))
+  @IsArray()
+  @ArrayMaxSize(4)
+  @ValidateNested({ each: true })
+  stats?: CaseStudyStatDto[];
+
+  @ApiPropertyOptional({
+    type: [CaseStudyProjectDto],
+    description: 'Sub-project cards, up to 4',
+  })
+  @IsOptional()
+  @Transform(jsonListOf(CaseStudyProjectDto))
+  @IsArray()
+  @ArrayMaxSize(4)
+  @ValidateNested({ each: true })
+  projects?: CaseStudyProjectDto[];
+
+  @OptionalText(200, 'Off-the-shelf RLHF data was failing Hindi users.')
+  problemTitle?: string | null;
+
+  @OptionalText(4000, 'What was going wrong for the client…')
+  problemBody?: string | null;
+
+  @OptionalText(200, 'Native-paired reviewers + cultural-context rubric.')
+  approachTitle?: string | null;
+
+  @OptionalText(4000, 'What we did…')
+  approachBody?: string | null;
+
+  @OptionalText(80, '4-layer QA breakdown')
+  breakdownTitle?: string | null;
+
+  @ApiPropertyOptional({
+    type: [CaseStudyBreakdownRowDto],
+    description: 'Up to 8 rows',
+  })
+  @IsOptional()
+  @Transform(jsonListOf(CaseStudyBreakdownRowDto))
+  @IsArray()
+  @ArrayMaxSize(8)
+  @ValidateNested({ each: true })
+  breakdown?: CaseStudyBreakdownRowDto[];
+
+  @OptionalText(80, 'Results per language')
+  resultsTitle?: string | null;
+
+  @ApiPropertyOptional({ type: [CaseStudyResultDto], description: 'Up to 4' })
+  @IsOptional()
+  @Transform(jsonListOf(CaseStudyResultDto))
+  @IsArray()
+  @ArrayMaxSize(4)
+  @ValidateNested({ each: true })
+  results?: CaseStudyResultDto[];
+
+  @OptionalText(1000, 'What the client said…')
+  quote?: string | null;
+
+  @OptionalText(160, 'ML Lead, Foundation Model Lab (anonymized)')
+  quoteAuthor?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Show as a "next case study loading…" placeholder',
   })
   @IsOptional()
   @Transform(bool)
   @IsBoolean()
-  consentRecorded?: boolean;
+  isUpcoming?: boolean;
 
   @ApiProperty({ enum: [PublishStatus.DRAFT, PublishStatus.PUBLISHED] })
   @IsIn([PublishStatus.DRAFT, PublishStatus.PUBLISHED])
   status: PublishStatus;
 
-  @ApiPropertyOptional({ example: 0 })
+  @ApiPropertyOptional({ description: 'Lower numbers show first' })
   @IsOptional()
   @Transform(blank)
   @Type(() => Number)
@@ -144,17 +270,11 @@ export class CaseStudyDto {
   @Min(0)
   sortOrder?: number;
 
-  @ApiPropertyOptional({ description: '"true" removes the current photo' })
+  @ApiPropertyOptional({ description: 'Remove the current cover image' })
   @IsOptional()
   @Transform(bool)
   @IsBoolean()
-  removePhoto?: boolean;
+  removeCover?: boolean;
 }
 
 export class UpdateCaseStudyDto extends PartialType(CaseStudyDto) {}
-
-export class CaseStudyStatsQueryDto {
-  @ApiProperty()
-  @IsUUID()
-  userId: string;
-}
