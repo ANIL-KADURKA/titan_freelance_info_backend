@@ -96,6 +96,7 @@ enum NotificationType {
   SUPPORT_TICKET_CREATED
   SUPPORT_TICKET_REPLY
   SUPPORT_TICKET_STATUS
+  JOB_OPENED
 }
 
 /// PENDING = waiting for admin review; only APPROVED is shown publicly.
@@ -179,6 +180,8 @@ enum PayUnit {
 enum JobStatus {
   DRAFT
   PUBLISHED
+  /// Shown publicly, not open yet: candidates can pre-apply.
+  UPCOMING
   ARCHIVED
   CLOSED
 }
@@ -358,6 +361,7 @@ model User {
   supportTickets               SupportTicket[]            @relation("SupportTicketRequester")
   supportTicketsAssigned       SupportTicket[]            @relation("SupportTicketAssignee")
   supportTicketMessages        SupportTicketMessage[]
+  jobPreApplications           JobPreApplication[]
   announcementReactions        AnnouncementReaction[]     @relation("AnnouncementReactions")
 
   @@index([status])
@@ -404,11 +408,15 @@ model Job {
   status                  JobStatus    @default(DRAFT)
   publishedAt             DateTime?    @map("published_at") @db.Timestamptz()
   applicationDeadline     DateTime?    @map("application_deadline") @db.Timestamptz()
+  /// Upcoming jobs: pre-apply by this date to earn `preApplyBonus` (INR).
+  preApplyDeadline        DateTime?    @map("pre_apply_deadline") @db.Timestamptz()
+  preApplyBonus           Decimal?     @map("pre_apply_bonus") @db.Decimal(12, 2)
   closedAt                DateTime?    @map("closed_at") @db.Timestamptz()
   createdAt               DateTime     @default(now()) @map("created_at") @db.Timestamptz()
   updatedAt               DateTime     @updatedAt @map("updated_at") @db.Timestamptz()
   deletedAt               DateTime?    @map("deleted_at") @db.Timestamptz()
 
+  preApplications   JobPreApplication[]
   category          JobCategory            @relation(fields: [categoryId], references: [id])
   createdBy         User                   @relation("CreatedJobs", fields: [createdById], references: [id])
   applicationFields JobApplicationField[]
@@ -1238,4 +1246,21 @@ model SupportTicketMessage {
 
   @@index([ticketId, createdAt])
   @@map("support_ticket_messages")
+}
+
+/// A candidate's interest in an upcoming job, before it opens.
+model JobPreApplication {
+  id        String   @id @default(uuid()) @db.Uuid
+  jobId     String   @map("job_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  /// Where they can work from (city / state).
+  location  String?  @db.VarChar(160)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  job  Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, userId])
+  @@index([userId])
+  @@map("job_pre_applications")
 }

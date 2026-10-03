@@ -182,6 +182,25 @@ export class UpdateJobDto {
   applicationDeadline?: string | Date | null;
 
   @ApiPropertyOptional({
+    example: '2026-08-10T00:00:00.000Z',
+    description: 'Upcoming jobs: pre-apply by this date for the bonus',
+  })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsDateString()
+  preApplyDeadline?: string | Date | null;
+
+  @ApiPropertyOptional({
+    example: 50,
+    description: 'Upcoming jobs: extra INR for pre-applying in time',
+  })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  preApplyBonus?: number | null;
+
+  @ApiPropertyOptional({
     example: '2026-10-30T00:00:00.000Z',
     description: 'Closed at',
   })
