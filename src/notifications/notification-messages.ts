@@ -288,3 +288,69 @@ export function testimonialReviewed(
         link: '/testimonials/share',
       };
 }
+
+// ── Support tickets ──
+
+export function supportTicketCreated(
+  label: string,
+  requester: string,
+  subject: string,
+): NotificationInput {
+  return {
+    type: 'SUPPORT_TICKET_CREATED',
+    title: `New support ticket ${label}`,
+    message: `${requester}: ${subject}`,
+    link: '/admin/support',
+  };
+}
+
+/** To the requester when support replies. */
+export function supportTicketAnswered(
+  label: string,
+  ticketId: string,
+): NotificationInput {
+  return {
+    type: 'SUPPORT_TICKET_REPLY',
+    title: `Support replied on ${label}`,
+    message: 'Open the ticket to read the reply and respond.',
+    link: `/support/${ticketId}`,
+  };
+}
+
+/** To the support team when the requester replies. */
+export function supportTicketFollowUp(
+  label: string,
+  requester: string,
+  ticketId: string,
+): NotificationInput {
+  return {
+    type: 'SUPPORT_TICKET_REPLY',
+    title: `New reply on ${label}`,
+    message: `${requester} replied to their ticket.`,
+    link: `/admin/support/${ticketId}`,
+  };
+}
+
+const supportStatusText: Record<string, string> = {
+  OPEN: 'reopened',
+  IN_PROGRESS: 'being worked on',
+  WAITING: 'waiting for your reply',
+  RESOLVED: 'resolved',
+  CLOSED: 'closed',
+};
+
+export function supportTicketStatusChanged(
+  label: string,
+  ticketId: string,
+  status: string,
+): NotificationInput {
+  return {
+    type: 'SUPPORT_TICKET_STATUS',
+    title: `${label} is ${supportStatusText[status] ?? status.toLowerCase()}`,
+    message:
+      status === 'RESOLVED'
+        ? 'If the issue is still there, reply on the ticket to reopen it.'
+        : 'Open the ticket for details.',
+    link: `/support/${ticketId}`,
+  };
+}

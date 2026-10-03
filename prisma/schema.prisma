@@ -93,6 +93,9 @@ enum NotificationType {
   AGREEMENT_UPDATED
   TESTIMONIAL_SUBMITTED
   TESTIMONIAL_REVIEWED
+  SUPPORT_TICKET_CREATED
+  SUPPORT_TICKET_REPLY
+  SUPPORT_TICKET_STATUS
 }
 
 /// PENDING = waiting for admin review; only APPROVED is shown publicly.
@@ -352,6 +355,9 @@ model User {
   testimonial                  Testimonial?               @relation("TestimonialAuthor")
   testimonialsReviewed         Testimonial[]              @relation("TestimonialReviewer")
   caseStudiesCreated           CaseStudy[]                @relation("CaseStudiesCreated")
+  supportTickets               SupportTicket[]            @relation("SupportTicketRequester")
+  supportTicketsAssigned       SupportTicket[]            @relation("SupportTicketAssignee")
+  supportTicketMessages        SupportTicketMessage[]
   announcementReactions        AnnouncementReaction[]     @relation("AnnouncementReactions")
 
   @@index([status])
@@ -932,6 +938,7 @@ model FileObject {
   testimonials              Testimonial[]              @relation("TestimonialPhoto")
   testimonialPendingPhotos  Testimonial[]              @relation("TestimonialPendingPhoto")
   caseStudyCovers           CaseStudy[]                @relation("CaseStudyCover")
+  supportTicketAttachments  SupportTicketMessage[]
   applicationDocuments      JobApplicationDocument[]
   candidateProfileDocuments CandidateProfileDocument[]
   jobResources              JobResource[]
@@ -1159,4 +1166,76 @@ model UserPaymentMethod {
   @@index([status, createdAt])
   @@index([userId, fingerprint])
   @@map("user_payment_methods")
+}
+
+enum SupportTicketCategory {
+  PAYOUT
+  KYC
+  TASK
+  TECHNICAL
+  ACCOUNT
+  OTHER
+}
+
+enum SupportTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  /// Waiting on the user's reply.
+  WAITING
+  RESOLVED
+  CLOSED
+}
+
+/// A help request from a user; the conversation is in SupportTicketMessage.
+model SupportTicket {
+  id                 String                @id @default(uuid()) @db.Uuid
+  /// Shown as TKT-0001.
+  number             Int                   @unique @default(autoincrement())
+  userId             String                @map("user_id") @db.Uuid
+  category           SupportTicketCategory
+  priority           SupportTicketPriority @default(MEDIUM)
+  status             SupportTicketStatus   @default(OPEN)
+  subject            String                @db.VarChar(120)
+  assignedToId       String?               @map("assigned_to_id") @db.Uuid
+  lastMessageAt      DateTime              @default(now()) @map("last_message_at") @db.Timestamptz()
+  /// Who wrote last, so each side knows whether a reply is new to them.
+  lastMessageByAdmin Boolean               @default(false) @map("last_message_by_admin")
+  userReadAt         DateTime?             @map("user_read_at") @db.Timestamptz()
+  adminReadAt        DateTime?             @map("admin_read_at") @db.Timestamptz()
+  resolvedAt         DateTime?             @map("resolved_at") @db.Timestamptz()
+  closedAt           DateTime?             @map("closed_at") @db.Timestamptz()
+  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz()
+
+  user       User                   @relation("SupportTicketRequester", fields: [userId], references: [id], onDelete: Cascade)
+  assignedTo User?                  @relation("SupportTicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  messages   SupportTicketMessage[]
+
+  @@index([userId, lastMessageAt])
+  @@index([status, lastMessageAt])
+  @@map("support_tickets")
+}
+
+model SupportTicketMessage {
+  id           String   @id @default(uuid()) @db.Uuid
+  ticketId     String   @map("ticket_id") @db.Uuid
+  authorId     String?  @map("author_id") @db.Uuid
+  /// Written by the support team (an admin), not the requester.
+  fromSupport  Boolean  @default(false) @map("from_support")
+  body         String
+  attachmentId String?  @map("attachment_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author     User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  attachment FileObject?   @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("support_ticket_messages")
 }

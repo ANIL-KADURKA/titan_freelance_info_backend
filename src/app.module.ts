@@ -9,6 +9,7 @@ import { CommunityModule } from './community/community.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { TimesheetsModule } from './timesheets/timesheets.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
+import { SupportModule } from './support/support.module.js';
 import { ApplicationsModule } from './applications/applications.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CommonModule } from './common/common.module.js';
@@ -40,6 +41,7 @@ import { WebsiteContentModule } from './website-content/website-content.module.j
     WebsiteContentModule,
     ApplicationsModule,
     NotificationsModule,
+    SupportModule,
     TimesheetsModule,
     DashboardModule,
     CommunityModule,
