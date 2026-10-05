@@ -28,6 +28,10 @@ export class PrismaService
         { emit: 'event', level: 'warn' },
         { emit: 'event', level: 'error' },
       ],
+      // Interactive transactions run many round trips to the hosted database
+      // (~200 ms each), so Prisma's 5 s default is too tight. Allow 1 minute,
+      // and up to 15 s to get a connection from the pool.
+      transactionOptions: { timeout: 60_000, maxWait: 15_000 },
     });
 
     this.$on('query', (event) => {

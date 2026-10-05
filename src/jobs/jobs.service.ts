@@ -1016,7 +1016,7 @@ export class JobsService {
           }
           return job;
         },
-        { timeout: 30_000 },
+        { timeout: 60_000 },
       );
       // After commit: tell candidates about the new project if it's live.
       if (dto.postToCommunity && created.status === JobStatus.PUBLISHED) {
