@@ -31,7 +31,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload) {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { tokenVersion: true, deletedAt: true },
+      select: {
+        tokenVersion: true,
+        deletedAt: true,
+        // Loaded here so RolesGuard needn't query again on the same request.
+        roles: { select: { role: { select: { name: true } } } },
+      },
     });
 
     // Changing or resetting the password bumps tokenVersion, which signs out
@@ -44,6 +49,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       id: payload.sub,
       email: payload.email,
       type: payload.type ?? 'access',
+      roles: (user.roles ?? []).map((entry) => entry.role.name as string),
     };
   }
 }

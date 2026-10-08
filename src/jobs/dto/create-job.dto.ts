@@ -167,13 +167,19 @@ export class CreateJobDto {
   @IsOptional()
   additionalInfo?: Record<string, unknown>;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: '9f1d37d1-7d7b-4842-b7a8-824db7e49ef6',
-    description: 'Cover image file id',
+    description: 'Cover image file id, from POST /jobs/images',
   })
-  @IsOptional()
-  @IsUUID()
-  coverImageId?: string;
+  @IsUUID('all', { message: 'Add a cover image.' })
+  coverImageId!: string;
+
+  @ApiProperty({
+    example: '0b8e4f62-2f4c-4a8e-9d55-6c1f0e6a7b21',
+    description: 'Company logo file id, from POST /jobs/images',
+  })
+  @IsUUID('all', { message: 'Add a logo.' })
+  logoId!: string;
 
   @ApiPropertyOptional({
     enum: JobStatus,

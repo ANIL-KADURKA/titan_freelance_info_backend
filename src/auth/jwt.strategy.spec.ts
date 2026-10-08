@@ -5,7 +5,11 @@ import type { PrismaService } from '../prisma/prisma.service.js';
 import { JwtStrategy } from './jwt.strategy.js';
 
 function createStrategy(
-  user: { tokenVersion: number; deletedAt: Date | null } | null,
+  user: {
+    tokenVersion: number;
+    deletedAt: Date | null;
+    roles?: { role: { name: string } }[];
+  } | null,
 ) {
   const prisma = {
     user: { findUnique: vi.fn().mockResolvedValue(user) },
@@ -23,6 +27,17 @@ describe('JwtStrategy.validate', () => {
       strategy.validate({ ...payload, ver: 2 }),
     ).resolves.toMatchObject({
       id: 'user-1',
+    });
+  });
+
+  it('returns the user roles so RolesGuard needs no extra query', async () => {
+    const strategy = createStrategy({
+      tokenVersion: 0,
+      deletedAt: null,
+      roles: [{ role: { name: 'ADMIN' } }],
+    });
+    await expect(strategy.validate(payload)).resolves.toMatchObject({
+      roles: ['ADMIN'],
     });
   });
 

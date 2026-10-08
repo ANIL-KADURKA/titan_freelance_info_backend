@@ -7,15 +7,24 @@ import {
   ParseEnumPipe,
   Patch,
   Post,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { WebsiteScreen } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { RolesGuard } from '../auth/roles.guard.js';
 import { UserRole } from '../auth/roles.enum.js';
+import type { UploadedDocument } from '../common/document-validation.service.js';
 import { CreateWebsiteContentDto } from './dto/create-website-content.dto.js';
 import { UpdateWebsiteContentDto } from './dto/update-website-content.dto.js';
 import { WebsiteContentService } from './website-content.service.js';
@@ -42,6 +51,22 @@ export class WebsiteContentController {
     screenKey: WebsiteScreen,
   ) {
     return this.websiteContentService.findByScreen(screenKey);
+  }
+
+  @Post('images')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN, UserRole.RECRUITER)
+  @UseInterceptors(FileInterceptor('image'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Upload a website image; save its id in the screen content',
+  })
+  uploadImage(
+    @UploadedFile() file: UploadedDocument | undefined,
+    @CurrentUser() user: { id?: string },
+  ) {
+    return this.websiteContentService.uploadImage(file, user?.id);
   }
 
   @Post()
