@@ -3,8 +3,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  /// Runtime: Supabase transaction pooler (port 6543, ?pgbouncer=true).
+  url       = env("DATABASE_URL")
+  /// Migrations: session pooler / direct connection (port 5432).
+  directUrl = env("DIRECT_URL")
 }
 
 enum AccountStatus {
@@ -43,6 +46,8 @@ enum ConsentType {
   MARKETING_EMAILS
   TERMS_AND_CONDITIONS
   PRIVACY_POLICY
+  TRAINER_AGREEMENT
+  TESTIMONIAL
 }
 
 enum SocialMediaType {
@@ -60,6 +65,78 @@ enum FileVisibility {
   PUBLIC
 }
 
+enum JobResourceType {
+  PDF
+  VIDEO
+  IMAGE
+  AUDIO
+  DOCUMENT
+  YOUTUBE
+  LINK
+}
+
+enum NotificationType {
+  APPLICATION_SUBMITTED
+  APPLICATION_STATUS
+  APPLICATION_SELECTED
+  APPLICATION_RECEIVED
+  APPLICATION_WITHDRAWN
+  PAYMENT_METHOD_SUBMITTED
+  PAYMENT_METHOD_REVIEWED
+  ACCOUNT_SECURITY
+  WELCOME
+  CANDIDATE_JOINED
+  TIMESHEET_SUBMITTED
+  TIMESHEET_REVIEWED
+  PAYOUT_SENT
+  COMMUNITY_POST
+  AGREEMENT_UPDATED
+  TESTIMONIAL_SUBMITTED
+  TESTIMONIAL_REVIEWED
+  SUPPORT_TICKET_CREATED
+  SUPPORT_TICKET_REPLY
+  SUPPORT_TICKET_STATUS
+  JOB_OPENED
+}
+
+/// PENDING = waiting for admin review; only APPROVED is shown publicly.
+enum TestimonialStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum AnnouncementStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum AnnouncementType {
+  ANNOUNCEMENT
+  NEW_PROJECT
+}
+
+/// Tag shown on community posts (e.g. "Task update").
+enum AnnouncementCategory {
+  GENERAL
+  TASK_UPDATE
+  PAYMENT_UPDATE
+  PLATFORM_UPDATE
+  EVENT
+}
+
+enum ReactionType {
+  LIKE
+  LOVE
+}
+
+enum TimesheetStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
 enum FileScanStatus {
   PENDING
   CLEAN
@@ -71,6 +148,7 @@ enum OtpPurpose {
   LOGIN
   EMAIL_VERIFICATION
   PASSWORD_RESET
+  PHONE_VERIFICATION
 }
 
 enum PublishStatus {
@@ -85,9 +163,25 @@ enum WorkMode {
   ONSITE
 }
 
+enum PayCurrency {
+  INR
+  USD
+}
+
+enum PayUnit {
+  HOUR
+  DAY
+  WEEK
+  MONTH
+  TASK
+  PROJECT
+}
+
 enum JobStatus {
   DRAFT
   PUBLISHED
+  /// Shown publicly, not open yet: candidates can pre-apply.
+  UPCOMING
   ARCHIVED
   CLOSED
 }
@@ -133,6 +227,7 @@ enum ApplicationStatus {
   INTERVIEW
   OFFERED
   HIRED
+  COMPLETED
   REJECTED
   WITHDRAWN
 }
@@ -205,6 +300,10 @@ model User {
   email                   String        @unique @db.VarChar(320)
   personalEmail           String        @unique @map("personal_email") @db.VarChar(320)
   phone                   String?       @db.VarChar(20)
+  phoneVerifiedAt         DateTime?     @map("phone_verified_at") @db.Timestamptz()
+  legalName               String?       @map("legal_name")
+  referralSource          String?       @map("referral_source") @db.VarChar(60)
+  onboardingCompletedAt   DateTime?     @map("onboarding_completed_at") @db.Timestamptz()
   firstName               String?       @map("first_name")
   lastName                String?       @map("last_name")
   gender                  GenderEnum?
@@ -212,10 +311,15 @@ model User {
   dateOfBirth             DateTime?     @map("date_of_birth") @db.Date
   profileImageId          String?       @map("profile_image_id") @db.Uuid
   passwordHash            String        @map("password_hash")
+  /// Google account id ("sub") once the user signs in with Google.
+  googleId                String?       @unique @map("google_id") @db.VarChar(64)
+  /// Google profile photo; shown when no photo has been uploaded.
+  googlePictureUrl        String?       @map("google_picture_url") @db.VarChar(1000)
   status                  AccountStatus @default(PENDING_VERIFICATION)
   statusReason            String?       @map("status_reason")
   emailVerifiedAt         DateTime?     @map("email_verified_at") @db.Timestamptz()
   failedLoginCount        Int           @default(0) @map("failed_login_count")
+  tokenVersion            Int           @default(0) @map("token_version")
   lockedUntil             DateTime?     @map("locked_until") @db.Timestamptz()
   lastLoginAt             DateTime?     @map("last_login_at") @db.Timestamptz()
   lastLoginIp             String?       @map("last_login_ip")
@@ -238,9 +342,27 @@ model User {
   applications                 CandidateApplication[]     @relation("CandidateApplications")
   assignedApplications         CandidateApplication[]     @relation("AssignedApplications")
   applicationStatusChanges     ApplicationStatusHistory[] @relation("ApplicationStatusChangedBy")
+  workAccountsSent             ApplicationWorkAccount[]   @relation("WorkAccountsSent")
+  notifications                Notification[]
   verifiedApplicationDocuments JobApplicationDocument[]   @relation("DocumentVerifiedBy")
   candidateProfileValues       CandidateProfileValue[]
   candidateProfileDocuments    CandidateProfileDocument[]
+  paymentMethods               UserPaymentMethod[]        @relation("UserPaymentMethods")
+  reviewedPaymentMethods       UserPaymentMethod[]        @relation("ReviewedPaymentMethods")
+  timesheetEntries             TimesheetEntry[]           @relation("TimesheetEntries")
+  timesheetsReviewed           TimesheetEntry[]           @relation("TimesheetsReviewed")
+  payoutsReceived              Payout[]                   @relation("PayoutsReceived")
+  payoutsSent                  Payout[]                   @relation("PayoutsSent")
+  announcementsCreated         Announcement[]             @relation("AnnouncementsCreated")
+  agreementsCreated            Agreement[]                @relation("AgreementsCreated")
+  testimonial                  Testimonial?               @relation("TestimonialAuthor")
+  testimonialsReviewed         Testimonial[]              @relation("TestimonialReviewer")
+  caseStudiesCreated           CaseStudy[]                @relation("CaseStudiesCreated")
+  supportTickets               SupportTicket[]            @relation("SupportTicketRequester")
+  supportTicketsAssigned       SupportTicket[]            @relation("SupportTicketAssignee")
+  supportTicketMessages        SupportTicketMessage[]
+  jobPreApplications           JobPreApplication[]
+  announcementReactions        AnnouncementReaction[]     @relation("AnnouncementReactions")
 
   @@index([status])
   @@map("users")
@@ -263,36 +385,54 @@ model JobCategory {
 }
 
 model Job {
-  id                      String    @id @default(uuid()) @db.Uuid
-  slug                    String    @unique @db.VarChar(200)
+  id                      String       @id @default(uuid()) @db.Uuid
+  slug                    String       @unique @db.VarChar(200)
   title                   String
-  categoryId              String    @map("category_id") @db.Uuid
-  createdById             String    @map("created_by_id") @db.Uuid
+  categoryId              String       @map("category_id") @db.Uuid
+  createdById             String       @map("created_by_id") @db.Uuid
   summary                 String?
   description             String
-  skills                  String[]  @default([])
-  requirements            String[]  @default([])
+  skills                  String[]     @default([])
+  requirements            String[]     @default([])
   location                String?
-  workMode                WorkMode  @default(REMOTE) @map("work_mode")
+  workMode                WorkMode     @default(REMOTE) @map("work_mode")
   duration                String?
   openings                Int?
-  applicationInstructions String[]  @default([]) @map("application_instructions")
-  workInstructions        String[]  @default([]) @map("work_instructions")
-  additionalInfo          Json?     @map("additional_info")
-  coverImageId            String?   @map("cover_image_id") @db.Uuid
-  status                  JobStatus @default(DRAFT)
-  publishedAt             DateTime? @map("published_at") @db.Timestamptz()
-  applicationDeadline     DateTime? @map("application_deadline") @db.Timestamptz()
-  closedAt                DateTime? @map("closed_at") @db.Timestamptz()
-  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt               DateTime? @map("deleted_at") @db.Timestamptz()
+  payAmount               Decimal?     @map("pay_amount") @db.Decimal(12, 2)
+  payCurrency             PayCurrency? @map("pay_currency")
+  payUnit                 PayUnit?     @map("pay_unit")
+  applicationInstructions String[]     @default([]) @map("application_instructions")
+  workInstructions        String[]     @default([]) @map("work_instructions")
+  additionalInfo          Json?        @map("additional_info")
+  /// Cover image and company logo: required to create, edit or publish a job
+  /// (enforced by the API). New uploads are Cloudinary URLs; the *Id columns
+  /// are older S3 uploads, used only when the URL is empty.
+  coverImageUrl           String?      @map("cover_image_url")
+  logoUrl                 String?      @map("logo_url")
+  coverImageId            String?      @map("cover_image_id") @db.Uuid
+  logoId                  String?      @map("logo_id") @db.Uuid
+  status                  JobStatus    @default(DRAFT)
+  publishedAt             DateTime?    @map("published_at") @db.Timestamptz()
+  applicationDeadline     DateTime?    @map("application_deadline") @db.Timestamptz()
+  /// Upcoming jobs: pre-apply by this date to earn `preApplyBonus` (INR).
+  preApplyDeadline        DateTime?    @map("pre_apply_deadline") @db.Timestamptz()
+  preApplyBonus           Decimal?     @map("pre_apply_bonus") @db.Decimal(12, 2)
+  closedAt                DateTime?    @map("closed_at") @db.Timestamptz()
+  createdAt               DateTime     @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt               DateTime     @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt               DateTime?    @map("deleted_at") @db.Timestamptz()
 
+  preApplications   JobPreApplication[]
+  coverImage        FileObject?            @relation("JobCover", fields: [coverImageId], references: [id])
+  logo              FileObject?            @relation("JobLogo", fields: [logoId], references: [id])
   category          JobCategory            @relation(fields: [categoryId], references: [id])
   createdBy         User                   @relation("CreatedJobs", fields: [createdById], references: [id])
   applicationFields JobApplicationField[]
   eligibilityRules  JobEligibilityRule[]
   applications      CandidateApplication[]
+  resources         JobResource[]
+  timesheetEntries  TimesheetEntry[]
+  announcements     Announcement[]
 
   @@index([status, publishedAt])
   @@index([categoryId])
@@ -331,29 +471,33 @@ model JobApplicationField {
 }
 
 model CandidateApplication {
-  id              String            @id @default(uuid()) @db.Uuid
-  applicationNo   String            @unique @map("application_no") @db.VarChar(30)
-  userId          String            @map("user_id") @db.Uuid
-  jobId           String            @map("job_id") @db.Uuid
-  status          ApplicationStatus @default(APPLIED)
-  statusChangedAt DateTime          @default(now()) @map("status_changed_at") @db.Timestamptz()
-  coverNote       String?           @map("cover_note")
-  rejectionReason String?           @map("rejection_reason")
-  withdrawnReason String?           @map("withdrawn_reason")
-  assignedToId    String?           @map("assigned_to_id") @db.Uuid
-  source          String?
-  appliedAt       DateTime          @default(now()) @map("applied_at") @db.Timestamptz()
-  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz()
+  id                 String            @id @default(uuid()) @db.Uuid
+  applicationNo      String            @unique @map("application_no") @db.VarChar(30)
+  userId             String            @map("user_id") @db.Uuid
+  jobId              String            @map("job_id") @db.Uuid
+  status             ApplicationStatus @default(APPLIED)
+  statusChangedAt    DateTime          @default(now()) @map("status_changed_at") @db.Timestamptz()
+  coverNote          String?           @map("cover_note")
+  /// Snapshot of the candidate's eligibility answers and the rule results.
+  eligibilityAnswers Json?             @map("eligibility_answers")
+  rejectionReason    String?           @map("rejection_reason")
+  withdrawnReason    String?           @map("withdrawn_reason")
+  assignedToId       String?           @map("assigned_to_id") @db.Uuid
+  source             String?
+  appliedAt          DateTime          @default(now()) @map("applied_at") @db.Timestamptz()
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt          DateTime?         @map("deleted_at") @db.Timestamptz()
 
   candidate  User  @relation("CandidateApplications", fields: [userId], references: [id])
   job        Job   @relation(fields: [jobId], references: [id])
   assignedTo User? @relation("AssignedApplications", fields: [assignedToId], references: [id], onDelete: SetNull)
 
-  statusHistory ApplicationStatusHistory[]
-  documents     JobApplicationDocument[]
-  fieldValues   JobApplicationFieldValue[]
+  statusHistory    ApplicationStatusHistory[]
+  documents        JobApplicationDocument[]
+  workAccount      ApplicationWorkAccount?
+  fieldValues      JobApplicationFieldValue[]
+  timesheetEntries TimesheetEntry[]
 
   @@unique([userId, jobId])
   @@index([jobId, status])
@@ -361,6 +505,154 @@ model CandidateApplication {
   @@index([assignedToId])
   @@index([deletedAt])
   @@map("applications")
+}
+
+/// Work account emailed to a selected candidate. The password is encrypted
+/// (AES-256-GCM, PAYMENT_DATA_KEY) and only decrypted for the owner or staff.
+model ApplicationWorkAccount {
+  id                String   @id @default(uuid()) @db.Uuid
+  applicationId     String   @unique @map("application_id") @db.Uuid
+  workEmail         String   @map("work_email") @db.VarChar(254)
+  passwordEncrypted String   @map("password_encrypted")
+  instructions      String?
+  sentAt            DateTime @default(now()) @map("sent_at") @db.Timestamptz()
+  sentById          String?  @map("sent_by_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  application CandidateApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  sentBy      User?                @relation("WorkAccountsSent", fields: [sentById], references: [id], onDelete: SetNull)
+
+  @@map("application_work_accounts")
+}
+
+/// One day of work on a project. Rate, currency and unit are copied from the
+/// job when submitted, so later pay changes don't alter history. Approved and
+/// unpaid (payoutId null) entries make up the candidate's pending payment.
+model TimesheetEntry {
+  id              String          @id @default(uuid()) @db.Uuid
+  applicationId   String          @map("application_id") @db.Uuid
+  userId          String          @map("user_id") @db.Uuid
+  jobId           String          @map("job_id") @db.Uuid
+  workDate        DateTime        @map("work_date") @db.Date
+  quantity        Decimal         @db.Decimal(8, 2)
+  rate            Decimal         @db.Decimal(12, 2)
+  currency        PayCurrency
+  unit            PayUnit
+  amount          Decimal         @db.Decimal(14, 2)
+  note            String
+  status          TimesheetStatus @default(SUBMITTED)
+  rejectionReason String?         @map("rejection_reason")
+  reviewedById    String?         @map("reviewed_by_id") @db.Uuid
+  reviewedAt      DateTime?       @map("reviewed_at") @db.Timestamptz()
+  payoutId        String?         @map("payout_id") @db.Uuid
+  /// Screenshot proving the work (required when submitting).
+  proofFileId     String?         @map("proof_file_id") @db.Uuid
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz()
+
+  application CandidateApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  user        User                 @relation("TimesheetEntries", fields: [userId], references: [id])
+  job         Job                  @relation(fields: [jobId], references: [id])
+  reviewedBy  User?                @relation("TimesheetsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  payout      Payout?              @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  proofFile   FileObject?          @relation("TimesheetProof", fields: [proofFileId], references: [id], onDelete: SetNull)
+
+  @@unique([applicationId, workDate])
+  @@index([userId, status])
+  @@index([jobId, workDate])
+  @@index([status])
+  @@index([payoutId])
+  @@map("timesheet_entries")
+}
+
+/// A payment made to a candidate, covering approved timesheet entries.
+/// The admin pays outside the app and uploads proof (screenshot).
+model Payout {
+  id                 String      @id @default(uuid()) @db.Uuid
+  userId             String      @map("user_id") @db.Uuid
+  amount             Decimal     @db.Decimal(14, 2)
+  currency           PayCurrency
+  reference          String?     @db.VarChar(120)
+  note               String?
+  proofFileId        String?     @map("proof_file_id") @db.Uuid
+  paymentMethodId    String?     @map("payment_method_id") @db.Uuid
+  /// Snapshot, e.g. "UPI name@okhdfcbank" or "Bank ••••1234 (HDFC0001234)"
+  paymentMethodLabel String?     @map("payment_method_label") @db.VarChar(200)
+  paidById           String?     @map("paid_by_id") @db.Uuid
+  paidAt             DateTime    @default(now()) @map("paid_at") @db.Timestamptz()
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+
+  user          User               @relation("PayoutsReceived", fields: [userId], references: [id])
+  paidBy        User?              @relation("PayoutsSent", fields: [paidById], references: [id], onDelete: SetNull)
+  proofFile     FileObject?        @relation("PayoutProof", fields: [proofFileId], references: [id], onDelete: SetNull)
+  paymentMethod UserPaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  entries       TimesheetEntry[]
+
+  @@index([userId, paidAt])
+  @@map("payouts")
+}
+
+/// Community feed post: an admin announcement, or a new project posted from
+/// the create-job form. Shown when PUBLISHED and not expired (null = never).
+model Announcement {
+  id          String               @id @default(uuid()) @db.Uuid
+  type        AnnouncementType     @default(ANNOUNCEMENT)
+  category    AnnouncementCategory @default(GENERAL)
+  title       String               @db.VarChar(200)
+  body        String
+  status      AnnouncementStatus   @default(DRAFT)
+  pinned      Boolean              @default(false)
+  expiresAt   DateTime?            @map("expires_at") @db.Timestamptz()
+  publishedAt DateTime?            @map("published_at") @db.Timestamptz()
+  jobId       String?              @map("job_id") @db.Uuid
+  createdById String?              @map("created_by_id") @db.Uuid
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz()
+
+  job       Job?                   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdBy User?                  @relation("AnnouncementsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  reactions AnnouncementReaction[]
+
+  @@index([status, pinned, publishedAt])
+  @@index([expiresAt])
+  @@index([jobId])
+  @@map("announcements")
+}
+
+/// One person's Like or Love on a community post (each can be toggled).
+model AnnouncementReaction {
+  id             String       @id @default(uuid()) @db.Uuid
+  announcementId String       @map("announcement_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  type           ReactionType
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz()
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user         User         @relation("AnnouncementReactions", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId, type])
+  @@index([announcementId, type])
+  @@map("announcement_reactions")
+}
+
+/// In-app notifications (bell + /notifications) for candidates and admins.
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  type      NotificationType
+  title     String           @db.VarChar(200)
+  message   String
+  /// In-app path to open, e.g. /projects/applied
+  link      String?          @db.VarChar(500)
+  readAt    DateTime?        @map("read_at") @db.Timestamptz()
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@map("notifications")
 }
 
 model ApplicationStatusHistory {
@@ -589,6 +881,7 @@ model AuthOtp {
   userId      String     @map("user_id") @db.Uuid
   purpose     OtpPurpose
   otpHash     String     @map("otp_hash") @db.VarChar(255)
+  target      String?    @db.VarChar(320)
   expiresAt   DateTime   @map("expires_at") @db.Timestamptz()
   attempts    Int        @default(0)
   maxAttempts Int        @default(5) @map("max_attempts")
@@ -603,19 +896,43 @@ model AuthOtp {
 }
 
 model ConsentRecord {
-  id          String      @id @default(uuid()) @db.Uuid
-  userId      String      @map("user_id") @db.Uuid
-  type        ConsentType
-  version     String      @db.VarChar(30)
-  grantedAt   DateTime    @default(now()) @map("granted_at") @db.Timestamptz()
-  withdrawnAt DateTime?   @map("withdrawn_at") @db.Timestamptz()
-  ipAddress   String?     @map("ip_address")
-  userAgent   String?     @map("user_agent")
+  id            String      @id @default(uuid()) @db.Uuid
+  userId        String      @map("user_id") @db.Uuid
+  type          ConsentType
+  version       String      @db.VarChar(30)
+  signatureName String?     @map("signature_name")
+  grantedAt     DateTime    @default(now()) @map("granted_at") @db.Timestamptz()
+  withdrawnAt   DateTime?   @map("withdrawn_at") @db.Timestamptz()
+  ipAddress     String?     @map("ip_address")
+  userAgent     String?     @map("user_agent")
+  /// The exact agreement text that was signed (trainer agreement only).
+  agreementId   String?     @map("agreement_id") @db.Uuid
 
-  user User @relation(fields: [userId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+  agreement Agreement? @relation(fields: [agreementId], references: [id])
 
   @@index([userId, type])
+  @@index([agreementId])
   @@map("consent_records")
+}
+
+/// Every published version of the trainer agreement; the highest
+/// (major, minor) is current. A new major version requires re-signing.
+model Agreement {
+  id          String   @id @default(uuid()) @db.Uuid
+  major       Int
+  minor       Int
+  title       String   @db.VarChar(200)
+  body        String
+  changeNote  String?  @map("change_note") @db.VarChar(300)
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  createdBy  User?           @relation("AgreementsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  signatures ConsentRecord[]
+
+  @@unique([major, minor])
+  @@map("agreements")
 }
 
 model FileObject {
@@ -635,8 +952,16 @@ model FileObject {
 
   uploadedBy                User?                      @relation("UploadedByUser", fields: [uploadedById], references: [id])
   testimonials              Testimonial[]              @relation("TestimonialPhoto")
+  testimonialPendingPhotos  Testimonial[]              @relation("TestimonialPendingPhoto")
+  caseStudyCovers           CaseStudy[]                @relation("CaseStudyCover")
+  supportTicketAttachments  SupportTicketMessage[]
   applicationDocuments      JobApplicationDocument[]
   candidateProfileDocuments CandidateProfileDocument[]
+  jobResources              JobResource[]
+  jobCovers                 Job[]                      @relation("JobCover")
+  jobLogos                  Job[]                      @relation("JobLogo")
+  payoutProofs              Payout[]                   @relation("PayoutProof")
+  timesheetProofs           TimesheetEntry[]           @relation("TimesheetProof")
 
   @@unique([bucket, objectKey])
   @@index([uploadedById])
@@ -644,23 +969,114 @@ model FileObject {
   @@map("file_objects")
 }
 
-model Testimonial {
-  id         String        @id @default(uuid()) @db.Uuid
-  authorName String        @map("author_name")
-  authorRole String?       @map("author_role")
-  quote      String
-  joinedAt   DateTime?     @map("joined_at") @db.Date
-  photoId    String?       @map("photo_id") @db.Uuid
-  status     PublishStatus @default(DRAFT)
-  sortOrder  Int           @default(0) @map("sort_order")
-  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz()
-  updatedAt  DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
-  deletedAt  DateTime?     @map("deleted_at") @db.Timestamptz()
+/// Training material attached to a job: an uploaded file (PDF, video, image,
+/// audio, document) or an external URL (YouTube, link).
+model JobResource {
+  id           String          @id @default(uuid()) @db.Uuid
+  jobId        String          @map("job_id") @db.Uuid
+  type         JobResourceType
+  title        String          @db.VarChar(200)
+  description  String?
+  fileId       String?         @map("file_id") @db.Uuid
+  url          String?
+  required     Boolean         @default(false)
+  displayOrder Int             @default(0) @map("display_order")
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz()
 
-  photo FileObject? @relation("TestimonialPhoto", fields: [photoId], references: [id])
+  job  Job         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  file FileObject? @relation(fields: [fileId], references: [id])
+
+  @@index([jobId, displayOrder])
+  @@index([fileId])
+  @@map("job_resources")
+}
+
+model Testimonial {
+  id              String            @id @default(uuid()) @db.Uuid
+  /// The candidate who wrote it; null when an admin added it by hand.
+  userId          String?           @unique @map("user_id") @db.Uuid
+  authorName      String            @map("author_name")
+  authorRole      String?           @map("author_role")
+  quote           String
+  rating          Int?
+  joinedAt        DateTime?         @map("joined_at") @db.Date
+  photoId         String?           @map("photo_id") @db.Uuid
+  status          TestimonialStatus @default(PENDING)
+  /// Edits to an approved testimonial wait here; the live version stays
+  /// public until an admin approves them.
+  pendingQuote    String?           @map("pending_quote")
+  pendingRole     String?           @map("pending_role")
+  pendingRating   Int?              @map("pending_rating")
+  pendingPhotoId  String?           @map("pending_photo_id") @db.Uuid
+  rejectionReason String?           @map("rejection_reason") @db.VarChar(500)
+  submittedAt     DateTime?         @map("submitted_at") @db.Timestamptz()
+  reviewedById    String?           @map("reviewed_by_id") @db.Uuid
+  reviewedAt      DateTime?         @map("reviewed_at") @db.Timestamptz()
+  consentedAt     DateTime?         @map("consented_at") @db.Timestamptz()
+  sortOrder       Int               @default(0) @map("sort_order")
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz()
+
+  user         User?       @relation("TestimonialAuthor", fields: [userId], references: [id], onDelete: SetNull)
+  reviewedBy   User?       @relation("TestimonialReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  photo        FileObject? @relation("TestimonialPhoto", fields: [photoId], references: [id])
+  pendingPhoto FileObject? @relation("TestimonialPendingPhoto", fields: [pendingPhotoId], references: [id], onDelete: SetNull)
 
   @@index([status, sortOrder])
   @@map("testimonials")
+}
+
+/// Long-form success stories, written and published by admins.
+model CaseStudy {
+  id             String        @id @default(uuid()) @db.Uuid
+  slug           String        @unique @db.VarChar(160)
+  /// Kind of project, shown as "CASE 01 · RLHF".
+  category       String        @db.VarChar(60)
+  /// Highlighted chip, e.g. "Hindi" or "5 languages".
+  focusTag       String?       @map("focus_tag") @db.VarChar(60)
+  /// e.g. "2025 · Q4".
+  period         String?       @db.VarChar(40)
+  /// Who it was for, e.g. "Foundation lab".
+  clientLabel    String?       @map("client_label") @db.VarChar(80)
+  title          String        @db.VarChar(200)
+  summary        String        @db.VarChar(500)
+  coverId        String?       @map("cover_id") @db.Uuid
+  /// Image link (https://… or a site path like /images/…), used when no cover is uploaded.
+  imageUrl       String?       @map("image_url") @db.VarChar(500)
+  /// Headline numbers: [{ value, label }], up to 4.
+  stats          Json          @default("[]")
+  /// Sub-projects shown as cards: [{ name, problem, approach }].
+  projects       Json          @default("[]")
+  problemTitle   String?       @map("problem_title") @db.VarChar(200)
+  problemBody    String?       @map("problem_body")
+  approachTitle  String?       @map("approach_title") @db.VarChar(200)
+  approachBody   String?       @map("approach_body")
+  /// Optional table, e.g. "4-layer QA breakdown": [{ code, text, value }].
+  breakdownTitle String?       @map("breakdown_title") @db.VarChar(80)
+  breakdown      Json          @default("[]")
+  /// Defaults to "Results" on the page.
+  resultsTitle   String?       @map("results_title") @db.VarChar(80)
+  /// [{ value, label, note }], up to 4.
+  results        Json          @default("[]")
+  quote          String?
+  quoteAuthor    String?       @map("quote_author") @db.VarChar(160)
+  /// Shown as a "next case study loading…" placeholder, not the full story.
+  isUpcoming     Boolean       @default(false) @map("is_upcoming")
+  status         PublishStatus @default(DRAFT)
+  publishedAt    DateTime?     @map("published_at") @db.Timestamptz()
+  sortOrder      Int           @default(0) @map("sort_order")
+  createdById    String?       @map("created_by_id") @db.Uuid
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz()
+
+  cover     FileObject? @relation("CaseStudyCover", fields: [coverId], references: [id], onDelete: SetNull)
+  createdBy User?       @relation("CaseStudiesCreated", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([status, sortOrder])
+  @@map("case_studies")
 }
 
 model UserAddress {
@@ -726,4 +1142,135 @@ model UserProfessionalInfo {
   user User @relation(fields: [userId], references: [id])
 
   @@map("user_professional_info")
+}
+
+enum PaymentMethodType {
+  UPI
+  BANK
+}
+
+enum PaymentMethodStatus {
+  VERIFICATION_PENDING
+  VERIFIED
+  REJECTED
+}
+
+/// Where a freelancer receives payouts. Admins verify each method before use.
+model UserPaymentMethod {
+  id                     String              @id @default(uuid()) @db.Uuid
+  userId                 String              @map("user_id") @db.Uuid
+  type                   PaymentMethodType
+  status                 PaymentMethodStatus @default(VERIFICATION_PENDING)
+  upiId                  String?             @map("upi_id") @db.VarChar(256)
+  accountHolderName      String?             @map("account_holder_name") @db.VarChar(120)
+  /// AES-256-GCM ciphertext; never returned to the candidate.
+  accountNumberEncrypted String?             @map("account_number_encrypted")
+  accountNumberLast4     String?             @map("account_number_last4") @db.VarChar(4)
+  ifsc                   String?             @db.VarChar(11)
+  /// HMAC of the normalised UPI ID / account+IFSC, used to block duplicates.
+  fingerprint            String              @db.VarChar(64)
+  rejectionReason        String?             @map("rejection_reason") @db.VarChar(500)
+  reviewedById           String?             @map("reviewed_by_id") @db.Uuid
+  reviewedAt             DateTime?           @map("reviewed_at") @db.Timestamptz()
+  createdAt              DateTime            @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt              DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt              DateTime?           @map("deleted_at") @db.Timestamptz()
+
+  user       User     @relation("UserPaymentMethods", fields: [userId], references: [id])
+  reviewedBy User?    @relation("ReviewedPaymentMethods", fields: [reviewedById], references: [id])
+  payouts    Payout[]
+
+  @@index([userId, deletedAt])
+  @@index([status, createdAt])
+  @@index([userId, fingerprint])
+  @@map("user_payment_methods")
+}
+
+enum SupportTicketCategory {
+  PAYOUT
+  KYC
+  TASK
+  TECHNICAL
+  ACCOUNT
+  OTHER
+}
+
+enum SupportTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  /// Waiting on the user's reply.
+  WAITING
+  RESOLVED
+  CLOSED
+}
+
+/// A help request from a user; the conversation is in SupportTicketMessage.
+model SupportTicket {
+  id                 String                @id @default(uuid()) @db.Uuid
+  /// Shown as TKT-0001.
+  number             Int                   @unique @default(autoincrement())
+  userId             String                @map("user_id") @db.Uuid
+  category           SupportTicketCategory
+  priority           SupportTicketPriority @default(MEDIUM)
+  status             SupportTicketStatus   @default(OPEN)
+  subject            String                @db.VarChar(120)
+  assignedToId       String?               @map("assigned_to_id") @db.Uuid
+  lastMessageAt      DateTime              @default(now()) @map("last_message_at") @db.Timestamptz()
+  /// Who wrote last, so each side knows whether a reply is new to them.
+  lastMessageByAdmin Boolean               @default(false) @map("last_message_by_admin")
+  userReadAt         DateTime?             @map("user_read_at") @db.Timestamptz()
+  adminReadAt        DateTime?             @map("admin_read_at") @db.Timestamptz()
+  resolvedAt         DateTime?             @map("resolved_at") @db.Timestamptz()
+  closedAt           DateTime?             @map("closed_at") @db.Timestamptz()
+  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz()
+
+  user       User                   @relation("SupportTicketRequester", fields: [userId], references: [id], onDelete: Cascade)
+  assignedTo User?                  @relation("SupportTicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  messages   SupportTicketMessage[]
+
+  @@index([userId, lastMessageAt])
+  @@index([status, lastMessageAt])
+  @@map("support_tickets")
+}
+
+model SupportTicketMessage {
+  id           String   @id @default(uuid()) @db.Uuid
+  ticketId     String   @map("ticket_id") @db.Uuid
+  authorId     String?  @map("author_id") @db.Uuid
+  /// Written by the support team (an admin), not the requester.
+  fromSupport  Boolean  @default(false) @map("from_support")
+  body         String
+  attachmentId String?  @map("attachment_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author     User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  attachment FileObject?   @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("support_ticket_messages")
+}
+
+/// A candidate's interest in an upcoming job, before it opens.
+model JobPreApplication {
+  id        String   @id @default(uuid()) @db.Uuid
+  jobId     String   @map("job_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  /// Where they can work from (city / state).
+  location  String?  @db.VarChar(160)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  job  Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, userId])
+  @@index([userId])
+  @@map("job_pre_applications")
 }

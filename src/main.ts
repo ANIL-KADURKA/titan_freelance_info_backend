@@ -48,6 +48,8 @@ async function bootstrap() {
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
     'https://titan-freelance.netlify.app',
+    'https://titanfreelance.com',
+    'https://www.titanfreelance.com',
     ...(configuredOrigins ?? []),
   ]);
 
@@ -56,14 +58,17 @@ async function bootstrap() {
       origin: string | undefined,
       callback: (error: Error | null, allow?: boolean) => void,
     ) {
-      if (!origin || allowedOrigins.has(normalizeOrigin(origin))) {
-        callback(null, true);
-        return;
-      }
-
-      callback(new Error(`Origin ${origin} is not allowed by CORS`), false);
+      // Unknown origins just get no CORS headers, so browsers block them.
+      // Throwing here turned every such request into a 500, including the
+      // Netlify /api/backend proxy, which forwards the browser's Origin.
+      callback(null, !origin || allowedOrigins.has(normalizeOrigin(origin)));
     },
-    allowedHeaders: ['Authorization', 'Content-Type'],
+    // ngrok header: the frontend's direct SSE connection sends it too.
+    allowedHeaders: [
+      'Authorization',
+      'Content-Type',
+      'ngrok-skip-browser-warning',
+    ],
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     optionsSuccessStatus: 204,
     credentials: true,

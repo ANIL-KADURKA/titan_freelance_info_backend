@@ -31,6 +31,16 @@ export class CreateApplicationDto {
 
   @ApiPropertyOptional({
     description:
+      'JSON object of eligibility answers keyed by rule fieldKey. Checked against the job rules on the server.',
+    example: { age: '24', has_laptop: 'true' },
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => parseJsonField(value))
+  @IsObject()
+  eligibilityAnswers?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description:
       'Map FILE application field keys to saved candidate profile document ids. Select saved files explicitly; sensitive documents are not suggested by prefill.',
     example: { resume: '8c6f0b27-992b-4f40-9f4d-6f63aeec9cd9' },
   })

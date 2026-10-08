@@ -1,15 +1,24 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { JobStatus, WorkMode } from '@prisma/client';
+import { JobStatus, PayCurrency, PayUnit, WorkMode } from '@prisma/client';
 import {
+  ArrayMaxSize,
   IsArray,
   IsDateString,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
+  MaxLength,
   Min,
+  ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { CreateJobApplicationFieldDto } from './create-job-application-field.dto.js';
+import { CreateJobEligibilityRuleDto } from './create-job-eligibility-rule.dto.js';
 
 export class UpdateJobDto {
   @ApiPropertyOptional({
@@ -95,6 +104,29 @@ export class UpdateJobDto {
   @Min(1)
   openings?: number;
 
+  @ApiPropertyOptional({ example: 300, description: 'Pay amount' })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100_000_000)
+  payAmount?: number | null;
+
+  @ApiPropertyOptional({
+    enum: PayCurrency,
+    description: 'Required when payAmount is set',
+  })
+  @ValidateIf((dto: { payAmount?: number | null }) => dto.payAmount != null)
+  @IsEnum(PayCurrency)
+  payCurrency?: PayCurrency;
+
+  @ApiPropertyOptional({
+    enum: PayUnit,
+    description: 'Pay period (per hour, day, week...). Required with payAmount',
+  })
+  @ValidateIf((dto: { payAmount?: number | null }) => dto.payAmount != null)
+  @IsEnum(PayUnit)
+  payUnit?: PayUnit;
+
   @ApiPropertyOptional({
     example: ['Send your resume'],
     description: 'Application instructions',
@@ -121,12 +153,20 @@ export class UpdateJobDto {
   additionalInfo?: Record<string, unknown>;
 
   @ApiPropertyOptional({
-    example: '9f1d37d1-7d7b-4842-b7a8-824db7e49ef6',
-    description: 'Cover image file id',
+    description: 'Replacement cover image URL, from POST /jobs/images',
   })
   @IsOptional()
-  @IsUUID()
-  coverImageId?: string;
+  @IsString()
+  @MaxLength(1000)
+  coverImageUrl?: string;
+
+  @ApiPropertyOptional({
+    description: 'Replacement company logo URL, from POST /jobs/images',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  logoUrl?: string;
 
   @ApiPropertyOptional({ enum: JobStatus, description: 'Job status' })
   @IsOptional()
@@ -143,11 +183,31 @@ export class UpdateJobDto {
 
   @ApiPropertyOptional({
     example: '2026-10-15T00:00:00.000Z',
-    description: 'Application deadline',
+    description: 'Application deadline; null removes it',
+    nullable: true,
   })
   @IsOptional()
   @IsDateString()
-  applicationDeadline?: string | Date;
+  applicationDeadline?: string | Date | null;
+
+  @ApiPropertyOptional({
+    example: '2026-08-10T00:00:00.000Z',
+    description: 'Upcoming jobs: pre-apply by this date for the bonus',
+  })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsDateString()
+  preApplyDeadline?: string | Date | null;
+
+  @ApiPropertyOptional({
+    example: 50,
+    description: 'Upcoming jobs: extra INR for pre-applying in time',
+  })
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  preApplyBonus?: number | null;
 
   @ApiPropertyOptional({
     example: '2026-10-30T00:00:00.000Z',
@@ -156,4 +216,26 @@ export class UpdateJobDto {
   @IsOptional()
   @IsDateString()
   closedAt?: string | Date;
+
+  @ApiPropertyOptional({
+    type: [CreateJobApplicationFieldDto],
+    description: 'Application fields to add, saved in the same transaction.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => CreateJobApplicationFieldDto)
+  applicationFields?: CreateJobApplicationFieldDto[];
+
+  @ApiPropertyOptional({
+    type: [CreateJobEligibilityRuleDto],
+    description: 'Eligibility rules to add, saved in the same transaction.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => CreateJobEligibilityRuleDto)
+  eligibilityRules?: CreateJobEligibilityRuleDto[];
 }

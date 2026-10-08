@@ -4,8 +4,12 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
+  Put,
+  Query,
+  Req,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -17,77 +21,132 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import type { Request } from 'express';
+import { CurrentUser } from '../auth/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { RolesGuard } from '../auth/roles.guard.js';
 import { UserRole } from '../auth/roles.enum.js';
+import type { UploadedDocument } from '../common/document-validation.service.js';
 import { CreateTestimonialDto } from './dto/create-testimonial.dto.js';
+import {
+  ListTestimonialsQueryDto,
+  RejectTestimonialDto,
+  SubmitTestimonialDto,
+} from './dto/my-testimonial.dto.js';
 import { UpdateTestimonialDto } from './dto/update-testimonial.dto.js';
 import { TestimonialsService } from './testimonials.service.js';
 
-type UploadedFileLike = {
-  originalname?: string;
-  mimetype?: string;
-  size?: number;
-  buffer: Buffer;
-};
+type AuthenticatedUser = { id: string };
 
 @ApiTags('Testimonials')
+@ApiBearerAuth()
 @Controller('testimonials')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class TestimonialsController {
   constructor(private readonly testimonialsService: TestimonialsService) {}
 
+  // ── Candidate ──
+
+  @Get('me')
+  @ApiOperation({ summary: 'My testimonial and whether I can submit one' })
+  mine(@CurrentUser() user: AuthenticatedUser) {
+    return this.testimonialsService.mine(user.id);
+  }
+
+  @Put('me')
+  @UseInterceptors(FileInterceptor('photo'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Submit or edit my testimonial (goes to review)' })
+  submit(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: SubmitTestimonialDto,
+    @Req() req: Request,
+    @UploadedFile() file?: UploadedDocument,
+  ) {
+    return this.testimonialsService.submit(
+      user.id,
+      dto,
+      file,
+      req.ip,
+      req.headers['user-agent'],
+    );
+  }
+
+  @Delete('me')
+  @ApiOperation({ summary: 'Withdraw my testimonial from the website' })
+  withdraw(@CurrentUser() user: AuthenticatedUser) {
+    return this.testimonialsService.withdraw(user.id);
+  }
+
+  // ── Admin ──
+
   @Get()
   @Roles(UserRole.ADMIN)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'List testimonials' })
-  findAll() {
-    return this.testimonialsService.findAll();
+  @ApiOperation({ summary: 'List testimonials by review tab, with counts' })
+  findAll(@Query() query: ListTestimonialsQueryDto) {
+    return this.testimonialsService.findAll(query);
   }
 
   @Get(':id')
   @Roles(UserRole.ADMIN)
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get testimonial by id' })
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.testimonialsService.findOne(id);
   }
 
   @Post()
   @Roles(UserRole.ADMIN)
-  @ApiBearerAuth()
   @UseInterceptors(FileInterceptor('photo'))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Create a testimonial and upload the photo' })
+  @ApiOperation({ summary: 'Add a testimonial by hand (photo required)' })
   create(
+    @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateTestimonialDto,
-    @UploadedFile() file?: UploadedFileLike,
+    @UploadedFile() file?: UploadedDocument,
   ) {
-    return this.testimonialsService.create(dto, file);
+    return this.testimonialsService.create(user.id, dto, file);
   }
 
   @Patch(':id')
   @Roles(UserRole.ADMIN)
-  @ApiBearerAuth()
   @UseInterceptors(FileInterceptor('photo'))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({
-    summary: 'Update a testimonial and optionally replace photo',
-  })
+  @ApiOperation({ summary: 'Edit a testimonial (and optionally its photo)' })
   update(
-    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateTestimonialDto,
-    @UploadedFile() file?: UploadedFileLike,
+    @UploadedFile() file?: UploadedDocument,
   ) {
-    return this.testimonialsService.update(id, dto, file);
+    return this.testimonialsService.update(user.id, id, dto, file);
+  }
+
+  @Post(':id/approve')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Approve: publish it, or apply the pending edit' })
+  approve(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.testimonialsService.approve(user.id, id);
+  }
+
+  @Post(':id/reject')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Reject with a reason the candidate will see' })
+  reject(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RejectTestimonialDto,
+  ) {
+    return this.testimonialsService.reject(user.id, id, dto.reason);
   }
 
   @Delete(':id')
   @Roles(UserRole.ADMIN)
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Delete a testimonial' })
-  delete(@Param('id') id: string) {
+  delete(@Param('id', ParseUUIDPipe) id: string) {
     return this.testimonialsService.delete(id);
   }
 }

@@ -1,8 +1,15 @@
+# Single-package project. `packages` is required by older pnpm versions that
+# some build hosts default to; package.json pins the pnpm version too.
+packages:
+  - '.'
+
+# Install scripts allowed to run: Prisma generates its client and downloads
+# its engines on install, and esbuild fetches its binary. Others stay off.
 allowBuilds:
-  '@prisma/client': false
-  '@prisma/engines': false
+  '@prisma/client': true
+  '@prisma/engines': true
+  esbuild: true
+  prisma: true
   '@scarf/scarf': false
-  esbuild: false
-  msgpackr-extract: set this to true or false
-  prisma: false
-  workerd: set this to true or false
+  msgpackr-extract: false
+  workerd: false

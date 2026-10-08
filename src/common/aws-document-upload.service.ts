@@ -36,6 +36,8 @@ export class AwsDocumentUploadService {
   ) {
     this.s3 = new S3Client({
       region: this.configService.get<string>('AWS_S3_REGION') ?? 'us-east-1',
+      // Survive a wrong AWS_S3_REGION instead of failing with PermanentRedirect.
+      followRegionRedirects: true,
       credentials: {
         accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID') ?? '',
         secretAccessKey:

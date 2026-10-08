@@ -3,6 +3,7 @@ import { PassportModule } from '@nestjs/passport';
 import { CommonModule } from '../common/common.module.js';
 import { PrismaModule } from '../prisma/prisma.module.js';
 import { ApplicationsController } from './applications.controller.js';
+import { PaymentDataCipher } from '../payment-methods/payment-data-cipher.js';
 import { ApplicationsService } from './applications.service.js';
 
 @Module({
@@ -12,7 +13,7 @@ import { ApplicationsService } from './applications.service.js';
     CommonModule,
   ],
   controllers: [ApplicationsController],
-  providers: [ApplicationsService],
+  providers: [ApplicationsService, PaymentDataCipher],
   exports: [ApplicationsService],
 })
 export class ApplicationsModule {}

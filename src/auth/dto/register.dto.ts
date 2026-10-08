@@ -5,6 +5,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  MaxLength,
   MinLength,
 } from 'class-validator';
 import { GenderEnum } from '@prisma/client';
@@ -60,4 +61,13 @@ export class RegisterDto {
   @IsOptional()
   @IsEnum(GenderEnum)
   gender?: GenderEnum;
+
+  @ApiPropertyOptional({
+    example: 'Instagram',
+    description: 'How the user heard about Titan',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  referralSource?: string;
 }

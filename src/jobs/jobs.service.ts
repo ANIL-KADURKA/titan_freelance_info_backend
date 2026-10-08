@@ -7,11 +7,22 @@ import {
 } from '@nestjs/common';
 import {
   ApplicationFieldType,
+  type FileObject,
   JobStatus,
+  PayCurrency,
+  PayUnit,
   Prisma,
   WorkMode,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { CloudinaryService } from '../common/cloudinary.service.js';
+import type { UploadedDocument } from '../common/document-validation.service.js';
+import { S3StorageService } from '../common/s3-storage.service.js';
+import { newProjectAnnouncement } from '../community/announcement-rules.js';
+import { communityPost } from '../notifications/notification-messages.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { JobPreApplicationsService } from './job-pre-applications.service.js';
+import { JobResourcesService } from './job-resources.service.js';
 import { UserRole } from '../auth/roles.enum.js';
 import { CreateJobApplicationFieldDto } from './dto/create-job-application-field.dto.js';
 import { UpdateJobApplicationFieldDto } from './dto/update-job-application-field.dto.js';
@@ -25,11 +36,162 @@ import { UpdateJobDto } from './dto/update-job.dto.js';
 
 type JobSearchScope = 'admin' | 'public';
 
+/** Older S3 cover/logo files, loaded with every job as a fallback. */
+const jobImages = { coverImage: true, logo: true } as const;
+
+type WithJobImages = {
+  coverImageUrl?: string | null;
+  logoUrl?: string | null;
+  coverImage?: FileObject | null;
+  logo?: FileObject | null;
+};
+
+/** Public jobs show on the landing page and job board, so they need both. */
+const statusesNeedingImages: JobStatus[] = [
+  JobStatus.PUBLISHED,
+  JobStatus.UPCOMING,
+];
+
+/** A new application deadline must be a valid moment in the future. */
+export function assertFutureDeadline(
+  value: string | Date | null | undefined,
+  now = new Date(),
+) {
+  if (!value) return;
+  const deadline = new Date(value);
+  if (Number.isNaN(deadline.getTime())) {
+    throw new BadRequestException('Enter a valid application deadline.');
+  }
+  if (deadline <= now) {
+    throw new BadRequestException(
+      'The application deadline must be in the future.',
+    );
+  }
+}
+
 @Injectable()
 export class JobsService {
   private readonly logger = new Logger(JobsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jobResourcesService: JobResourcesService,
+    private readonly notifications: NotificationsService,
+    private readonly preApplications: JobPreApplicationsService,
+    private readonly cloudinary: CloudinaryService,
+    private readonly storage: S3StorageService,
+  ) {}
+
+  /** Uploads a job cover image or logo to Cloudinary; the form saves the URL. */
+  async uploadImage(file: UploadedDocument | undefined) {
+    if (!file) {
+      throw new BadRequestException('Choose an image to upload.');
+    }
+    return { url: await this.cloudinary.uploadImage(file, 'jobs') };
+  }
+
+  /** View URL for an older S3 upload (jobs from before Cloudinary). */
+  private legacyImageUrl(file: FileObject | null | undefined) {
+    if (!file || file.deletedAt) return Promise.resolve(null);
+    return this.storage.createViewUrl(file.bucket, file.objectKey, {
+      fileName: file.originalName,
+      contentType: file.mimeType,
+    });
+  }
+
+  /**
+   * Cloudinary URL when set, else the older S3 file's view URL. The file rows
+   * are dropped (their BigInt sizes don't serialise).
+   */
+  private async withImageUrls<T extends WithJobImages>(job: T) {
+    const { coverImage, logo, ...rest } = job;
+    const [coverImageUrl, logoUrl] = await Promise.all([
+      job.coverImageUrl || this.legacyImageUrl(coverImage),
+      job.logoUrl || this.legacyImageUrl(logo),
+    ]);
+    return { ...rest, coverImageUrl, logoUrl };
+  }
+
+  /** New image URLs must come from our Cloudinary uploads. */
+  private assertOwnImageUrls(...urls: Array<string | null | undefined>) {
+    for (const url of urls) {
+      if (url && !this.cloudinary.isOwnImageUrl(url)) {
+        throw new BadRequestException(
+          'Upload the cover image and logo again, then save.',
+        );
+      }
+    }
+  }
+
+  /**
+   * Validates new application fields up front (keys unique in the payload
+   * and against `existingKeys`, references valid) and maps them to rows.
+   */
+  private async prepareApplicationFields(
+    fields: CreateJobApplicationFieldDto[],
+    existingKeys: string[] = [],
+  ): Promise<Prisma.JobApplicationFieldUncheckedCreateWithoutJobInput[]> {
+    const seen = new Set(existingKeys);
+    const rows: Prisma.JobApplicationFieldUncheckedCreateWithoutJobInput[] = [];
+    for (const [index, field] of fields.entries()) {
+      const fieldKey = field.fieldKey.trim();
+      if (!fieldKey) {
+        throw new BadRequestException('Application field key is required');
+      }
+      if (seen.has(fieldKey)) {
+        throw new BadRequestException(
+          `Application field key "${fieldKey}" is used more than once.`,
+        );
+      }
+      seen.add(fieldKey);
+      await this.validateApplicationFieldReferences(
+        field.fieldType,
+        field.profileFieldId,
+        field.documentTypeId,
+      );
+      rows.push({
+        fieldKey,
+        fieldType: field.fieldType,
+        label: field.label.trim(),
+        description: field.description?.trim() || null,
+        required: field.required ?? false,
+        displayOrder: field.displayOrder ?? existingKeys.length + index,
+        profileFieldId: field.profileFieldId,
+        documentTypeId: field.documentTypeId,
+        options: (field.options as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+      });
+    }
+    return rows;
+  }
+
+  private prepareEligibilityRules(
+    rules: CreateJobEligibilityRuleDto[],
+    existingKeys: string[] = [],
+  ): Prisma.JobEligibilityRuleUncheckedCreateWithoutJobInput[] {
+    const seen = new Set(existingKeys);
+    return rules.map((rule, index) => {
+      const fieldKey = rule.fieldKey?.trim();
+      if (!fieldKey) {
+        throw new BadRequestException('Eligibility field key is required');
+      }
+      if (rule.value === undefined || rule.value === null) {
+        throw new BadRequestException('Eligibility value is required');
+      }
+      if (seen.has(fieldKey)) {
+        throw new BadRequestException(
+          `Eligibility rule key "${fieldKey}" is used more than once.`,
+        );
+      }
+      seen.add(fieldKey);
+      return {
+        fieldKey,
+        fieldType: rule.fieldType,
+        operator: rule.operator,
+        value: rule.value as Prisma.InputJsonValue,
+        displayOrder: rule.displayOrder ?? existingKeys.length + index,
+      };
+    });
+  }
 
   private assertValidUuid(id: string, label: string) {
     const uuidPattern =
@@ -158,6 +320,7 @@ export class JobsService {
     const job = await this.prisma.job.findFirst({
       where: { id: jobId, deletedAt: null },
       include: {
+        ...jobImages,
         category: true,
         createdBy: {
           select: { id: true, email: true, firstName: true, lastName: true },
@@ -165,6 +328,18 @@ export class JobsService {
         applicationFields: {
           where: { deletedAt: null },
           orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+          // File fields: the apply page shows the allowed types and size.
+          include: {
+            documentType: {
+              select: {
+                id: true,
+                key: true,
+                name: true,
+                allowedMimeTypes: true,
+                maxSizeBytes: true,
+              },
+            },
+          },
         },
         eligibilityRules: {
           where: { deletedAt: null },
@@ -476,9 +651,10 @@ export class JobsService {
   }
 
   async findAllJobs() {
-    return this.prisma.job.findMany({
+    const jobs = await this.prisma.job.findMany({
       where: { deletedAt: null },
       include: {
+        ...jobImages,
         category: true,
         createdBy: {
           select: { id: true, email: true, firstName: true, lastName: true },
@@ -486,6 +662,18 @@ export class JobsService {
         applicationFields: {
           where: { deletedAt: null },
           orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+          // File fields: the apply page shows the allowed types and size.
+          include: {
+            documentType: {
+              select: {
+                id: true,
+                key: true,
+                name: true,
+                allowedMimeTypes: true,
+                maxSizeBytes: true,
+              },
+            },
+          },
         },
         eligibilityRules: {
           orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
@@ -493,10 +681,11 @@ export class JobsService {
       },
       orderBy: [{ createdAt: 'desc' }],
     });
+    return Promise.all(jobs.map((job) => this.withImageUrls(job)));
   }
 
   async findJobById(id: string) {
-    return this.ensureJobExists(id);
+    return this.withImageUrls(await this.ensureJobExists(id));
   }
 
   async findJobByIdForUser(id: string, userId?: string) {
@@ -517,6 +706,7 @@ export class JobsService {
             }),
       },
       include: {
+        ...jobImages,
         category: true,
         createdBy: canViewAllJobs
           ? {
@@ -531,6 +721,18 @@ export class JobsService {
         applicationFields: {
           where: { deletedAt: null },
           orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+          // File fields: the apply page shows the allowed types and size.
+          include: {
+            documentType: {
+              select: {
+                id: true,
+                key: true,
+                name: true,
+                allowedMimeTypes: true,
+                maxSizeBytes: true,
+              },
+            },
+          },
         },
         eligibilityRules: {
           where: { deletedAt: null },
@@ -543,7 +745,7 @@ export class JobsService {
       throw new NotFoundException('Job not found');
     }
 
-    return job;
+    return this.withImageUrls(job);
   }
 
   private async userHasAnyRole(userId: string, roles: UserRole[]) {
@@ -576,10 +778,23 @@ export class JobsService {
         category: { isActive: true },
       },
       include: {
+        ...jobImages,
         category: true,
         applicationFields: {
           where: { deletedAt: null },
           orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+          // File fields: the apply page shows the allowed types and size.
+          include: {
+            documentType: {
+              select: {
+                id: true,
+                key: true,
+                name: true,
+                allowedMimeTypes: true,
+                maxSizeBytes: true,
+              },
+            },
+          },
         },
         eligibilityRules: {
           where: { deletedAt: null },
@@ -593,7 +808,7 @@ export class JobsService {
       throw new NotFoundException('Job not found');
     }
 
-    return job;
+    return this.withImageUrls(job);
   }
 
   private async logPublicJobLookupMiss(identifier: string) {
@@ -675,6 +890,7 @@ export class JobsService {
       this.prisma.job.findMany({
         where,
         include: {
+          ...jobImages,
           category: true,
           createdBy:
             scope === 'admin'
@@ -701,6 +917,15 @@ export class JobsService {
                   orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
                 }
               : false,
+          // Admin jobs table shows how many people applied.
+          _count:
+            scope === 'admin'
+              ? {
+                  select: {
+                    applications: { where: { deletedAt: null } },
+                  },
+                }
+              : false,
         },
         orderBy,
         skip: (page - 1) * pageSize,
@@ -713,7 +938,7 @@ export class JobsService {
     ]);
 
     return {
-      data,
+      data: await Promise.all(data.map((job) => this.withImageUrls(job))),
       meta: {
         page,
         pageSize,
@@ -731,7 +956,30 @@ export class JobsService {
     };
   }
 
+  /**
+   * Creates the job with its application fields, eligibility rules and
+   * resources in one transaction. If anything fails nothing is saved, and the
+   * files staged in S3 for it are deleted.
+   */
   async createJob(dto: CreateJobDto, currentUserId?: string) {
+    const ownerId = dto.createdById ?? currentUserId;
+    try {
+      return await this.createJobWithChildren(dto, currentUserId);
+    } catch (error) {
+      if (ownerId && dto.resources?.length) {
+        await this.jobResourcesService.discardDraftUploads(
+          ownerId,
+          dto.resources,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async createJobWithChildren(
+    dto: CreateJobDto,
+    currentUserId?: string,
+  ) {
     if (!dto.title?.trim()) {
       throw new BadRequestException('Job title is required');
     }
@@ -755,6 +1003,11 @@ export class JobsService {
 
     await this.ensureUserExists(createdById);
 
+    assertFutureDeadline(dto.applicationDeadline);
+    if (!dto.coverImageUrl || !dto.logoUrl) {
+      throw new BadRequestException('Add a cover image and a logo.');
+    }
+    this.assertOwnImageUrls(dto.coverImageUrl, dto.logoUrl);
     const title = dto.title.trim();
     const slug = this.normalizeSlug(dto.slug ?? title, 'Job');
     await this.assertJobSlugAvailable(slug);
@@ -774,29 +1027,85 @@ export class JobsService {
       workMode: dto.workMode ?? WorkMode.REMOTE,
       duration: dto.duration?.trim() || null,
       openings: dto.openings ?? null,
+      ...this.toPayFields(dto.payAmount, dto.payCurrency, dto.payUnit),
       applicationInstructions: dto.applicationInstructions ?? [],
       workInstructions: dto.workInstructions ?? [],
       additionalInfo:
         dto.additionalInfo === undefined
           ? Prisma.JsonNull
           : (dto.additionalInfo as Prisma.InputJsonValue),
-      coverImageId: dto.coverImageId ?? null,
+      coverImageUrl: dto.coverImageUrl,
+      logoUrl: dto.logoUrl,
       status: dto.status ?? JobStatus.DRAFT,
       publishedAt: dto.publishedAt ?? null,
       applicationDeadline: dto.applicationDeadline ?? null,
+      preApplyDeadline: dto.preApplyDeadline ?? null,
+      preApplyBonus: dto.preApplyBonus ?? null,
       closedAt: dto.closedAt ?? null,
     };
 
+    // Validate everything before writing anything.
+    const applicationFields = await this.prepareApplicationFields(
+      dto.applicationFields ?? [],
+    );
+    const eligibilityRules = this.prepareEligibilityRules(
+      dto.eligibilityRules ?? [],
+    );
+    const resources = await this.jobResourcesService.prepareDraftResources(
+      createdById,
+      dto.resources ?? [],
+    );
+
     try {
-      return await this.prisma.job.create({
-        data,
-        include: {
-          category: true,
-          createdBy: {
-            select: { id: true, email: true, firstName: true, lastName: true },
-          },
+      const created = await this.prisma.$transaction(
+        async (tx) => {
+          const job = await tx.job.create({
+            data: {
+              ...data,
+              applicationFields: { create: applicationFields },
+              eligibilityRules: { create: eligibilityRules },
+            },
+            include: {
+              ...jobImages,
+              category: true,
+              createdBy: {
+                select: {
+                  id: true,
+                  email: true,
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+            },
+          });
+          await this.jobResourcesService.persistPreparedResources(
+            tx,
+            job.id,
+            createdById,
+            resources,
+          );
+          if (dto.postToCommunity) {
+            await tx.announcement.create({
+              data: newProjectAnnouncement(job, createdById),
+            });
+          }
+          return job;
         },
-      });
+        { timeout: 60_000 },
+      );
+      // After commit: tell candidates about the new project if it's live.
+      if (dto.postToCommunity && created.status === JobStatus.PUBLISHED) {
+        const post = newProjectAnnouncement(created, createdById);
+        await this.notifications.notifyCandidates(
+          communityPost({
+            title: post.title,
+            body: post.body,
+            type: 'NEW_PROJECT',
+            jobSlug: created.slug,
+          }),
+        );
+      }
+      return await this.withImageUrls(created);
     } catch (error) {
       this.rethrowUniqueConstraint(
         error,
@@ -827,6 +1136,16 @@ export class JobsService {
       throw new BadRequestException('Job description is required');
     }
 
+    // Only a changed deadline must be in the future, so jobs whose deadline
+    // has passed can still be edited.
+    if (
+      dto.applicationDeadline &&
+      new Date(dto.applicationDeadline).getTime() !==
+        existing.applicationDeadline?.getTime()
+    ) {
+      assertFutureDeadline(dto.applicationDeadline);
+    }
+
     const nextTitle = dto.title?.trim() ?? existing.title;
     const nextSlug =
       dto.slug !== undefined || dto.title !== undefined
@@ -839,6 +1158,20 @@ export class JobsService {
     const nextClosedAt =
       dto.closedAt !== undefined ? dto.closedAt : existing.closedAt;
     const nextStatus = dto.status ?? existing.status;
+
+    // Images can be replaced but not removed. Older jobs without them can
+    // still be closed or drafted, but need both to be live.
+    if (dto.coverImageUrl === null || dto.logoUrl === null) {
+      throw new BadRequestException('A job needs a cover image and a logo.');
+    }
+    this.assertOwnImageUrls(dto.coverImageUrl, dto.logoUrl);
+    const hasCover = Boolean(
+      dto.coverImageUrl || existing.coverImageUrl || existing.coverImageId,
+    );
+    const hasLogo = Boolean(dto.logoUrl || existing.logoUrl || existing.logoId);
+    if (statusesNeedingImages.includes(nextStatus) && !(hasCover && hasLogo)) {
+      throw new BadRequestException('Add a cover image and a logo.');
+    }
 
     const data: Prisma.JobUpdateInput = {
       title: nextTitle,
@@ -866,6 +1199,11 @@ export class JobsService {
           ? dto.duration?.trim() || null
           : existing.duration,
       openings: dto.openings ?? existing.openings,
+      // Pay is set as a unit: an amount always comes with currency and unit,
+      // and sending payAmount: null clears all three.
+      ...(dto.payAmount !== undefined
+        ? this.toPayFields(dto.payAmount, dto.payCurrency, dto.payUnit)
+        : {}),
       applicationInstructions:
         dto.applicationInstructions ?? existing.applicationInstructions,
       workInstructions: dto.workInstructions ?? existing.workInstructions,
@@ -873,32 +1211,74 @@ export class JobsService {
         dto.additionalInfo === undefined
           ? (existing.additionalInfo ?? Prisma.JsonNull)
           : (dto.additionalInfo as Prisma.InputJsonValue),
-      coverImageId:
-        dto.coverImageId !== undefined
-          ? (dto.coverImageId ?? null)
-          : existing.coverImageId,
+      ...(dto.coverImageUrl ? { coverImageUrl: dto.coverImageUrl } : {}),
+      ...(dto.logoUrl ? { logoUrl: dto.logoUrl } : {}),
       status: nextStatus,
       publishedAt: nextPublishedAt,
       applicationDeadline:
         dto.applicationDeadline !== undefined
           ? dto.applicationDeadline
           : existing.applicationDeadline,
+      // undefined keeps the value; null clears it.
+      preApplyDeadline: dto.preApplyDeadline,
+      preApplyBonus: dto.preApplyBonus,
       closedAt: nextClosedAt,
     };
+
+    // New fields/rules are added in the same write, so it's all or nothing.
+    const [existingFields, existingRules] = await Promise.all([
+      dto.applicationFields?.length
+        ? this.prisma.jobApplicationField.findMany({
+            where: { jobId: id },
+            select: { fieldKey: true },
+          })
+        : [],
+      dto.eligibilityRules?.length
+        ? this.prisma.jobEligibilityRule.findMany({
+            where: { jobId: id },
+            select: { fieldKey: true },
+          })
+        : [],
+    ]);
+    const newFields = await this.prepareApplicationFields(
+      dto.applicationFields ?? [],
+      existingFields.map((field) => field.fieldKey),
+    );
+    const newRules = this.prepareEligibilityRules(
+      dto.eligibilityRules ?? [],
+      existingRules.map((rule) => rule.fieldKey),
+    );
 
     this.logger.log(`Updating job: ${id}`);
 
     try {
-      return await this.prisma.job.update({
+      const updated = await this.prisma.job.update({
         where: { id },
-        data,
+        data: {
+          ...data,
+          ...(newFields.length
+            ? { applicationFields: { create: newFields } }
+            : {}),
+          ...(newRules.length
+            ? { eligibilityRules: { create: newRules } }
+            : {}),
+        },
         include: {
+          ...jobImages,
           category: true,
           createdBy: {
             select: { id: true, email: true, firstName: true, lastName: true },
           },
         },
       });
+      // Upcoming → published: tell everyone who pre-applied.
+      if (
+        existing.status === JobStatus.UPCOMING &&
+        updated.status === JobStatus.PUBLISHED
+      ) {
+        await this.preApplications.notifyOpened(updated);
+      }
+      return await this.withImageUrls(updated);
     } catch (error) {
       this.rethrowUniqueConstraint(
         error,
@@ -985,9 +1365,25 @@ export class JobsService {
       .filter(Boolean);
   }
 
+  private toPayFields(
+    payAmount: number | null | undefined,
+    payCurrency: PayCurrency | undefined,
+    payUnit: PayUnit | undefined,
+  ) {
+    if (payAmount == null) {
+      return { payAmount: null, payCurrency: null, payUnit: null };
+    }
+    if (!payCurrency || !payUnit) {
+      throw new BadRequestException(
+        'Pay currency and unit are required when a pay amount is set',
+      );
+    }
+    return { payAmount: new Prisma.Decimal(payAmount), payCurrency, payUnit };
+  }
+
   private isUuid(value: string) {
     const uuidPattern =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
     return uuidPattern.test(value);
   }
@@ -1025,6 +1421,17 @@ export class JobsService {
         return [{ title: 'desc' }];
       case JobSearchSort.OPENINGS_HIGH:
         return [{ openings: 'desc' }, { createdAt: 'desc' }];
+      // Jobs without a pay amount go last either way.
+      case JobSearchSort.PAY_HIGH:
+        return [
+          { payAmount: { sort: 'desc', nulls: 'last' } },
+          { createdAt: 'desc' },
+        ];
+      case JobSearchSort.PAY_LOW:
+        return [
+          { payAmount: { sort: 'asc', nulls: 'last' } },
+          { createdAt: 'desc' },
+        ];
       case JobSearchSort.NEWEST:
       default:
         return [{ createdAt: 'desc' }];

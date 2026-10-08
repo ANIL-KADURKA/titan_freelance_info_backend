@@ -7,9 +7,16 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { UploadedDocument } from '../common/document-validation.service.js';
+import { UserAccountService } from './user-account.service.js';
+import { AdminUsersQueryDto } from './dto/admin-users-query.dto.js';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto.js';
 import { UserService } from './user.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { RolesGuard } from '../auth/roles.guard.js';
@@ -31,7 +38,57 @@ import {
 @Controller('users')
 @UseGuards(JwtAuthGuard)
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly userAccountService: UserAccountService,
+  ) {}
+
+  @Get('me/sessions')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'My recent sign-ins (login history)' })
+  listSessions(@CurrentUser() user: { id: string }) {
+    return this.userAccountService.listSessions(user.id);
+  }
+
+  @Get('me/photo')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Signed URL of my profile photo (or null)' })
+  getPhoto(@CurrentUser() user: { id: string }) {
+    return this.userAccountService.getPhoto(user.id);
+  }
+
+  @Post('me/photo')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Upload my profile photo (PNG, JPG, WebP; 5 MB)' })
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  async setPhoto(
+    @CurrentUser() user: { id: string },
+    @UploadedFile() file?: UploadedDocument,
+  ) {
+    const data = await this.userAccountService.setPhoto(user.id, file);
+    return { success: true, message: 'Profile photo updated.', data };
+  }
+
+  @Delete('me/photo')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Remove my profile photo' })
+  async removePhoto(@CurrentUser() user: { id: string }) {
+    const data = await this.userAccountService.removePhoto(user.id);
+    return { success: true, message: 'Profile photo removed.', data };
+  }
+
+  @Patch('me')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update my personal details' })
+  async updateMe(
+    @CurrentUser() user: { id: string },
+    @Body() dto: UpdateMyProfileDto,
+  ) {
+    const data = await this.userAccountService.updateMe(user.id, dto);
+    return { success: true, message: 'Profile updated.', data };
+  }
 
   @Get('me')
   @ApiBearerAuth()
@@ -47,17 +104,15 @@ export class UserController {
   @Roles(UserRole.ADMIN)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'List all users for admin management' })
-  listUsersForAdmin(
-    @Query('status') status?: string,
-    @Query('role') role?: string,
-    @Query('search') search?: string,
-    @Query('includeSummary') includeSummary?: string,
-  ) {
+  listUsersForAdmin(@Query() query: AdminUsersQueryDto) {
     return this.userService.listUsersForAdmin({
-      status,
-      role,
-      search,
-      includeSummary: includeSummary === 'true' || includeSummary === '1',
+      status: query.status,
+      role: query.role,
+      search: query.search,
+      includeSummary:
+        query.includeSummary === 'true' || query.includeSummary === '1',
+      page: query.page,
+      pageSize: query.pageSize,
     });
   }
 

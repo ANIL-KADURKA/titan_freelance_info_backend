@@ -16,6 +16,27 @@ import { randomUUID } from 'node:crypto';
 import { UserRole } from '../auth/roles.enum.js';
 import { AwsDocumentUploadService } from '../common/aws-document-upload.service.js';
 import type { UploadedDocument } from '../common/document-validation.service.js';
+import { paged, pageArgs } from '../common/pagination.js';
+import { S3StorageService } from '../common/s3-storage.service.js';
+import { ConfigService } from '@nestjs/config';
+import { MailService } from '../common/mail.service.js';
+import { PaymentDataCipher } from '../payment-methods/payment-data-cipher.js';
+import {
+  type MyProjectsQueryDto,
+  type ProjectView,
+} from './dto/my-projects-query.dto.js';
+import { SelectApplicationDto } from './dto/select-application.dto.js';
+import {
+  applicationReceived,
+  applicationSelected,
+  applicationStatusChanged,
+  applicationSubmitted,
+  applicationWithdrawn,
+  personName,
+} from '../notifications/notification-messages.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { checkEligibility } from './eligibility.js';
+import { selectionEmail } from './selection-email.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreateApplicationDto } from './dto/create-application.dto.js';
 import { CreateDocumentTypeDto } from './dto/create-document-type.dto.js';
@@ -24,11 +45,45 @@ import { ListApplicationsDto } from './dto/list-applications.dto.js';
 import { UpdateApplicationDto } from './dto/update-application.dto.js';
 import { UpdateApplicationStatusDto } from './dto/update-application-status.dto.js';
 
+/** Light rows for paged admin lists (details come from GET /:id). */
+const applicationListSelect = {
+  id: true,
+  applicationNo: true,
+  status: true,
+  appliedAt: true,
+  createdAt: true,
+  candidate: {
+    select: { id: true, email: true, firstName: true, lastName: true },
+  },
+  job: {
+    select: {
+      id: true,
+      slug: true,
+      title: true,
+      status: true,
+      category: { select: { id: true, name: true } },
+    },
+  },
+} satisfies Prisma.CandidateApplicationSelect;
+
 const applicationInclude = {
   candidate: {
     select: { id: true, email: true, firstName: true, lastName: true },
   },
-  job: { select: { id: true, slug: true, title: true, status: true } },
+  job: {
+    select: {
+      id: true,
+      slug: true,
+      title: true,
+      status: true,
+      location: true,
+      workMode: true,
+      payAmount: true,
+      payCurrency: true,
+      payUnit: true,
+      category: { select: { id: true, name: true } },
+    },
+  },
   fieldValues: {
     include: {
       field: {
@@ -60,6 +115,8 @@ const applicationInclude = {
       },
     },
   },
+  // Never the password: that's only returned decrypted by getWorkAccount.
+  workAccount: { select: { workEmail: true, sentAt: true } },
   statusHistory: {
     orderBy: { createdAt: 'asc' },
     include: {
@@ -84,6 +141,11 @@ export class ApplicationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly awsDocumentUploadService: AwsDocumentUploadService,
+    private readonly s3Storage: S3StorageService,
+    private readonly mailService: MailService,
+    private readonly configService: ConfigService,
+    private readonly cipher: PaymentDataCipher,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private assertValidUuid(id: string, label: string): void {
@@ -709,18 +771,174 @@ export class ApplicationsService {
     };
   }
 
+  /**
+   * Admin list, paged. `counts` has one number per status for the tabs,
+   * using the same job/search filters but ignoring the status filter.
+   */
   async findAll(query: ListApplicationsDto) {
-    const where: Prisma.CandidateApplicationWhereInput = {
+    const term = query.search?.trim();
+    const scope: Prisma.CandidateApplicationWhereInput = {
       ...(query.includeDeleted ? {} : { deletedAt: null }),
-      ...(query.status ? { status: query.status } : {}),
       ...(query.jobId ? { jobId: query.jobId } : {}),
+      ...(query.statuses?.length ? { status: { in: query.statuses } } : {}),
+      ...(term
+        ? {
+            OR: [
+              { applicationNo: { contains: term, mode: 'insensitive' } },
+              { job: { title: { contains: term, mode: 'insensitive' } } },
+              {
+                candidate: {
+                  OR: [
+                    { email: { contains: term, mode: 'insensitive' } },
+                    { firstName: { contains: term, mode: 'insensitive' } },
+                    { lastName: { contains: term, mode: 'insensitive' } },
+                  ],
+                },
+              },
+            ],
+          }
+        : {}),
     };
+    const where: Prisma.CandidateApplicationWhereInput = {
+      ...scope,
+      ...(query.status ? { status: query.status } : {}),
+    };
+    const args = pageArgs(query);
 
-    return this.prisma.candidateApplication.findMany({
-      where,
-      include: applicationInclude,
-      orderBy: [{ createdAt: 'desc' }],
+    const [rows, total, grouped] = await this.prisma.$transaction([
+      this.prisma.candidateApplication.findMany({
+        where,
+        select: applicationListSelect,
+        orderBy: [{ createdAt: 'desc' }],
+        skip: args.skip,
+        take: args.take,
+      }),
+      this.prisma.candidateApplication.count({ where }),
+      this.prisma.candidateApplication.groupBy({
+        by: ['status'],
+        where: scope,
+        orderBy: { status: 'asc' },
+        _count: { _all: true },
+      }),
+    ]);
+    const counts = Object.fromEntries(
+      grouped.map((group) => [
+        group.status,
+        (group._count as { _all: number })._all,
+      ]),
+    ) as Partial<Record<ApplicationStatus, number>>;
+    return { ...paged(rows, total, args), counts };
+  }
+
+  /**
+   * Job summary and a count per status for the job's applications screen.
+   * The applications themselves come paged from GET /applications?jobId=.
+   */
+  async findForJob(jobId: string) {
+    this.assertValidUuid(jobId, 'job');
+    const job = await this.prisma.job.findFirst({
+      where: { id: jobId, deletedAt: null },
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        status: true,
+        openings: true,
+        applicationDeadline: true,
+        category: { select: { id: true, name: true } },
+      },
     });
+    if (!job) {
+      throw new NotFoundException('Job not found.');
+    }
+
+    const grouped = await this.prisma.candidateApplication.groupBy({
+      by: ['status'],
+      where: { jobId, deletedAt: null },
+      _count: { _all: true },
+    });
+    const counts = Object.fromEntries(
+      grouped.map((group) => [group.status, group._count._all]),
+    ) as Partial<Record<ApplicationStatus, number>>;
+    const total = grouped.reduce((sum, group) => sum + group._count._all, 0);
+
+    return { job, counts, total };
+  }
+
+  /** Short-lived link to open an application document (staff or owner). */
+  async getDocumentViewUrl(
+    applicationId: string,
+    documentId: string,
+    userId: string,
+  ) {
+    await this.assertCanAccess(applicationId, userId);
+    this.assertValidUuid(documentId, 'document');
+    const document = await this.prisma.jobApplicationDocument.findFirst({
+      where: { id: documentId, applicationId },
+      include: { fileObject: true },
+    });
+    if (!document) {
+      throw new NotFoundException('Document not found.');
+    }
+    const { fileObject } = document;
+    const url = await this.s3Storage.createViewUrl(
+      fileObject.bucket,
+      fileObject.objectKey,
+      {
+        fileName: fileObject.originalName,
+        contentType: fileObject.mimeType,
+      },
+    );
+    return {
+      url,
+      fileName: fileObject.originalName,
+      mimeType: fileObject.mimeType,
+    };
+  }
+
+  /**
+   * The candidate's My Projects, paged. Applied = every application;
+   * current = selected on a live job; completed = marked completed, or
+   * selected on a job that has since closed.
+   */
+  async findMyProjects(userId: string, query: MyProjectsQueryDto) {
+    const ended = { status: { in: [JobStatus.CLOSED, JobStatus.ARCHIVED] } };
+    const filters: Record<ProjectView, Prisma.CandidateApplicationWhereInput> =
+      {
+        applied: {},
+        current: { status: ApplicationStatus.HIRED, job: { NOT: ended } },
+        completed: {
+          OR: [
+            { status: ApplicationStatus.COMPLETED },
+            { status: ApplicationStatus.HIRED, job: ended },
+          ],
+        },
+      };
+    const base = { userId, deletedAt: null };
+    const where = { ...base, ...filters[query.view ?? 'applied'] };
+    const args = pageArgs(query);
+    const [rows, total, applied, current, completed] =
+      await this.prisma.$transaction([
+        this.prisma.candidateApplication.findMany({
+          where,
+          include: applicationInclude,
+          orderBy: [{ createdAt: 'desc' }],
+          skip: args.skip,
+          take: args.take,
+        }),
+        this.prisma.candidateApplication.count({ where }),
+        this.prisma.candidateApplication.count({ where: base }),
+        this.prisma.candidateApplication.count({
+          where: { ...base, ...filters.current },
+        }),
+        this.prisma.candidateApplication.count({
+          where: { ...base, ...filters.completed },
+        }),
+      ]);
+    return {
+      ...paged(rows, total, args),
+      counts: { applied, current, completed },
+    };
   }
 
   async findMine(userId: string) {
@@ -771,11 +989,27 @@ export class ApplicationsService {
           include: { documentType: true },
           orderBy: [{ displayOrder: 'asc' }],
         },
+        eligibilityRules: {
+          where: { deletedAt: null },
+          orderBy: [{ displayOrder: 'asc' }],
+        },
       },
     });
 
     if (!job) {
       throw new NotFoundException('Job not found.');
+    }
+
+    // Re-check eligibility on the server and keep a snapshot for reviewers.
+    const eligibility = checkEligibility(
+      job.eligibilityRules,
+      dto.eligibilityAnswers,
+    );
+    if (!eligibility.eligible) {
+      throw new BadRequestException({
+        code: 'NOT_ELIGIBLE',
+        message: 'You are not eligible to apply for this job.',
+      });
     }
 
     if (job.status !== JobStatus.PUBLISHED) {
@@ -975,6 +1209,9 @@ export class ApplicationsService {
             candidate: { connect: { id: userId } },
             job: { connect: { id: dto.jobId } },
             coverNote: dto.coverNote?.trim() || null,
+            eligibilityAnswers: job.eligibilityRules.length
+              ? (eligibility.results as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
             fieldValues: {
               create: Object.entries(dto.values ?? {}).map(
                 ([fieldKey, value]) => ({
@@ -1034,6 +1271,19 @@ export class ApplicationsService {
       this.logger.log(
         `Created application ${application.id} for job ${dto.jobId}`,
       );
+      await Promise.all([
+        this.notifications.notifyUser(
+          userId,
+          applicationSubmitted(application.job.title),
+        ),
+        this.notifications.notifyAdmins(
+          applicationReceived(
+            personName(application.candidate),
+            application.job.title,
+            application.id,
+          ),
+        ),
+      ]);
       return { data: application, alreadyApplied: false };
     } catch (error) {
       await this.cleanupUploadedFiles(
@@ -1120,6 +1370,122 @@ export class ApplicationsService {
     return this.assertCanAccess(applicationId, userId);
   }
 
+  /**
+   * Selects a candidate: emails the congratulations message with the work
+   * account and instructions, then marks the application HIRED. The email is
+   * sent first, so a failed email leaves the status unchanged. The password is
+   * never stored. Calling it again on a selected candidate resends the email.
+   */
+  async selectCandidate(
+    applicationId: string,
+    staffUserId: string,
+    dto: SelectApplicationDto,
+  ) {
+    this.assertValidUuid(applicationId, 'application');
+    if (!(await this.hasStaffAccess(staffUserId))) {
+      throw new ForbiddenException(
+        'Only an administrator or recruiter can select candidates.',
+      );
+    }
+    const application = await this.prisma.candidateApplication.findFirst({
+      where: { id: applicationId, deletedAt: null },
+      include: {
+        candidate: { select: { email: true, firstName: true, lastName: true } },
+        job: { select: { title: true } },
+      },
+    });
+    if (!application) {
+      throw new NotFoundException('Application not found.');
+    }
+    if (application.status === ApplicationStatus.WITHDRAWN) {
+      throw new ConflictException({
+        code: 'APPLICATION_WITHDRAWN',
+        message: 'This candidate withdrew their application.',
+      });
+    }
+
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+    await this.mailService.send(
+      application.candidate.email,
+      selectionEmail({
+        name: application.candidate.firstName,
+        projectTitle: application.job.title,
+        applicationNo: application.applicationNo,
+        workEmail: dto.workEmail,
+        workPassword: dto.workPassword,
+        workInstructions: dto.workInstructions,
+        projectsUrl: frontendUrl
+          ? `${frontendUrl.replace(/\/$/, '')}/projects/current`
+          : null,
+      }),
+    );
+
+    const alreadySelected = application.status === ApplicationStatus.HIRED;
+    const note = [
+      alreadySelected
+        ? `Selection email resent (work account ${dto.workEmail}).`
+        : `Selected. Work account ${dto.workEmail}${dto.workInstructions ? ' and instructions' : ''} emailed to the candidate.`,
+      dto.comment,
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    await this.prisma.$transaction(async (tx) => {
+      // Keep what was emailed so admin and candidate can see it later.
+      const workAccount = {
+        workEmail: dto.workEmail,
+        passwordEncrypted: this.cipher.encrypt(dto.workPassword),
+        instructions: dto.workInstructions || null,
+        sentAt: new Date(),
+        sentById: staffUserId,
+      };
+      await tx.applicationWorkAccount.upsert({
+        where: { applicationId },
+        create: { applicationId, ...workAccount },
+        update: workAccount,
+      });
+      if (!alreadySelected) {
+        await tx.candidateApplication.update({
+          where: { id: applicationId },
+          data: {
+            status: ApplicationStatus.HIRED,
+            statusChangedAt: new Date(),
+          },
+        });
+      }
+      await tx.applicationStatusHistory.create({
+        data: {
+          applicationId,
+          fromStatus: application.status,
+          toStatus: ApplicationStatus.HIRED,
+          changedById: staffUserId,
+          comment: note,
+        },
+      });
+    });
+
+    await this.notifications.notifyUser(
+      application.userId,
+      applicationSelected(application.job.title, alreadySelected),
+    );
+    return this.assertCanAccess(applicationId, staffUserId);
+  }
+
+  /** Decrypted work account, for the candidate who owns it or staff. */
+  async getWorkAccount(applicationId: string, userId: string) {
+    await this.assertCanAccess(applicationId, userId);
+    const account = await this.prisma.applicationWorkAccount.findUnique({
+      where: { applicationId },
+    });
+    if (!account) return null;
+    return {
+      workEmail: account.workEmail,
+      workPassword: this.cipher.decrypt(account.passwordEncrypted),
+      instructions: account.instructions,
+      sentAt: account.sentAt,
+    };
+  }
+
   async updateStatus(
     applicationId: string,
     userId: string,
@@ -1170,7 +1536,10 @@ export class ApplicationsService {
       });
     });
 
-    return this.assertCanAccess(applicationId, userId);
+    const updated = await this.assertCanAccess(applicationId, userId);
+    const notice = applicationStatusChanged(dto.status, updated.job.title);
+    if (notice) await this.notifications.notifyUser(updated.userId, notice);
+    return updated;
   }
 
   async uploadDocument(
@@ -1347,6 +1716,17 @@ export class ApplicationsService {
       where: { id: applicationId },
       data: { deletedAt: new Date() },
     });
+
+    // A candidate removing their own application = withdrawing it.
+    if (application.userId === userId) {
+      await this.notifications.notifyAdmins(
+        applicationWithdrawn(
+          personName(application.candidate),
+          application.job.title,
+          applicationId,
+        ),
+      );
+    }
 
     this.logger.log(`Soft deleted application ${applicationId}`);
     return { message: 'Application soft deleted successfully.' };

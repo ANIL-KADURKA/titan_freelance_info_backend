@@ -18,9 +18,11 @@ import type { Request } from 'express';
 import { AuthService } from './auth.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
+import { GoogleLoginDto } from './dto/google-login.dto.js';
 import { RequestOtpDto } from './dto/request-otp.dto.js';
 import { VerifyOtpDto } from './dto/verify-otp.dto.js';
 import { ResetPasswordDto } from './dto/reset-password.dto.js';
+import { ChangePasswordDto } from './dto/change-password.dto.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { CurrentUser } from './current-user.decorator.js';
 import { UpdateCredentialsDto } from './dto/update-credentials.dto.js';
@@ -47,6 +49,14 @@ export class AuthController {
     return this.authService.login(dto, req.headers['user-agent'], req.ip);
   }
 
+  @Post('google')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sign in or sign up with a Google ID token' })
+  @ApiResponse({ status: 200, description: 'Authentication successful' })
+  async google(@Body() dto: GoogleLoginDto, @Req() req: Request) {
+    return this.authService.googleLogin(dto, req.headers['user-agent'], req.ip);
+  }
+
   @Post('otp/request')
   @ApiOperation({
     summary: 'Request an OTP for login, verification, or password reset',
@@ -59,9 +69,13 @@ export class AuthController {
   @Post('otp/verify')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify an OTP' })
-  @ApiResponse({ status: 200, description: 'OTP verified' })
-  async verifyOtp(@Body() dto: VerifyOtpDto) {
-    return this.authService.verifyOtp(dto);
+  @ApiResponse({
+    status: 200,
+    description:
+      'OTP verified. Email verification also returns session tokens.',
+  })
+  async verifyOtp(@Body() dto: VerifyOtpDto, @Req() req: Request) {
+    return this.authService.verifyOtp(dto, req.headers['user-agent'], req.ip);
   }
 
   @Post('password/reset')
@@ -70,6 +84,25 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Password updated' })
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto);
+  }
+
+  @Post('password/change')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Change password using the current password' })
+  @ApiResponse({ status: 200, description: 'Password changed' })
+  async changePassword(
+    @CurrentUser() user: { id: string },
+    @Body() dto: ChangePasswordDto,
+    @Req() req: Request,
+  ) {
+    return this.authService.changePassword(
+      user.id,
+      dto,
+      req.headers['user-agent'],
+      req.ip,
+    );
   }
 
   @Get('me')
