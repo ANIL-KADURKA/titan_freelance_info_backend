@@ -15,6 +15,7 @@ import {
   SaveOnboardingProfileDto,
   SendPhoneOtpDto,
   SignAgreementDto,
+  VerifyFirebasePhoneDto,
   VerifyPhoneOtpDto,
 } from './dto/onboarding.dto.js';
 import { OnboardingService } from './onboarding.service.js';
@@ -50,6 +51,17 @@ export class OnboardingController {
     @Body() dto: VerifyPhoneOtpDto,
   ) {
     return this.onboardingService.verifyPhoneOtp(user.id, dto.otp);
+  }
+
+  @Post('phone/firebase')
+  @ApiOperation({
+    summary: 'Verify the mobile number with a Firebase phone sign-in token',
+  })
+  verifyFirebasePhone(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: VerifyFirebasePhoneDto,
+  ) {
+    return this.onboardingService.verifyFirebasePhone(user.id, dto.idToken);
   }
 
   @Put('profile')

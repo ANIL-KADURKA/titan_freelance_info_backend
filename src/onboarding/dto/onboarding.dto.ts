@@ -25,6 +25,14 @@ export class VerifyPhoneOtpDto {
   otp: string;
 }
 
+export class VerifyFirebasePhoneDto {
+  @ApiProperty({ description: 'Firebase ID token from phone sign-in' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(4096)
+  idToken: string;
+}
+
 export class SaveOnboardingProfileDto {
   @ApiProperty({ example: 'UshaSri Gudikandula' })
   @IsString()

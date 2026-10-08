@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { AgreementsService } from '../agreements/agreements.service.js';
 import { AuthService, getOnboardingStep } from '../auth/auth.service.js';
+import { FirebaseAuthService } from '../common/firebase-auth.service.js';
 import { normalizePhone } from '../common/phone.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { SaveOnboardingProfileDto } from './dto/onboarding.dto.js';
@@ -28,6 +29,7 @@ export class OnboardingService {
     private readonly configService: ConfigService,
     private readonly notifications: NotificationsService,
     private readonly agreements: AgreementsService,
+    private readonly firebase: FirebaseAuthService,
   ) {}
 
   async getState(userId: string) {
@@ -84,6 +86,7 @@ export class OnboardingService {
   }
 
   async sendPhoneOtp(userId: string, rawPhone: string) {
+    this.assertMockOtpAllowed();
     const phone = normalizePhone(rawPhone);
     const user = await this.findUser(userId);
 
@@ -116,6 +119,7 @@ export class OnboardingService {
   }
 
   async verifyPhoneOtp(userId: string, otp: string) {
+    this.assertMockOtpAllowed();
     const user = await this.findUser(userId);
     if (!user.phone) {
       throw new BadRequestException('Add a mobile number first');
@@ -130,6 +134,34 @@ export class OnboardingService {
     await this.prisma.user.update({
       where: { id: userId },
       data: { phoneVerifiedAt: new Date() },
+    });
+
+    return this.getState(userId);
+  }
+
+  /**
+   * Firebase sent and checked the SMS code in the browser; the number saved
+   * is the one inside the signed token, not one the browser sends.
+   */
+  async verifyFirebasePhone(userId: string, idToken: string) {
+    const phone = normalizePhone(await this.firebase.verifiedPhone(idToken));
+    const user = await this.findUser(userId);
+
+    if (user.phone === phone && user.phoneVerifiedAt) {
+      return this.getState(userId);
+    }
+    const taken = await this.prisma.user.findFirst({
+      where: { phone, deletedAt: null, NOT: { id: userId } },
+      select: { id: true },
+    });
+    if (taken) {
+      throw new ConflictException(
+        'This mobile number is already registered with another account.',
+      );
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { phone, phoneVerifiedAt: new Date() },
     });
 
     return this.getState(userId);
@@ -220,13 +252,22 @@ export class OnboardingService {
     return user;
   }
 
-  // Phone OTP is mocked in every environment until an SMS provider
-  // (e.g. MSG91 / Twilio) is added: every code is PHONE_OTP_MOCK_CODE.
+  // Without Firebase (local dev), phone OTP is mocked: every code is
+  // PHONE_OTP_MOCK_CODE. Once FIREBASE_PROJECT_ID is set the mock is refused,
+  // so nobody can verify a number they don't own.
+  private assertMockOtpAllowed() {
+    if (this.firebase.isConfigured) {
+      throw new BadRequestException(
+        'Verify your mobile number with the SMS code we send you.',
+      );
+    }
+  }
+
   private mockPhoneOtp() {
     return this.configService.get<string>('PHONE_OTP_MOCK_CODE') ?? '12345';
   }
 
-  // TODO: send a real SMS here and stop passing `fixedOtp` above.
+  // Mock only: real SMS is sent by Firebase from the browser.
   private async sendSms(phone: string, otp: string) {
     this.logger.log(`Mock SMS OTP issued for ${phone} (code ${otp})`);
   }
