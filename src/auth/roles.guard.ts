@@ -33,12 +33,16 @@ export class RolesGuard implements CanActivate {
       throw new UnauthorizedException('Authentication required');
     }
 
-    const userRoles = await this.prisma.userRole.findMany({
-      where: { userId: user.id },
-      include: { role: true },
-    });
-
-    const roles = userRoles.map((entry) => entry.role.name);
+    // JwtStrategy already loaded the roles with the session check; query only
+    // when the request was authenticated some other way.
+    const roles: string[] = Array.isArray(user.roles)
+      ? user.roles
+      : (
+          await this.prisma.userRole.findMany({
+            where: { userId: user.id },
+            include: { role: true },
+          })
+        ).map((entry) => entry.role.name);
     const isAuthorized = roles.some((role) => requiredRoles.includes(role));
 
     if (!isAuthorized) {

@@ -404,7 +404,10 @@ model Job {
   applicationInstructions String[]     @default([]) @map("application_instructions")
   workInstructions        String[]     @default([]) @map("work_instructions")
   additionalInfo          Json?        @map("additional_info")
+  /// Cover image and company logo: required to create, edit or publish a job
+  /// (enforced by the API; older rows may still be empty).
   coverImageId            String?      @map("cover_image_id") @db.Uuid
+  logoId                  String?      @map("logo_id") @db.Uuid
   status                  JobStatus    @default(DRAFT)
   publishedAt             DateTime?    @map("published_at") @db.Timestamptz()
   applicationDeadline     DateTime?    @map("application_deadline") @db.Timestamptz()
@@ -417,6 +420,8 @@ model Job {
   deletedAt               DateTime?    @map("deleted_at") @db.Timestamptz()
 
   preApplications   JobPreApplication[]
+  coverImage        FileObject?            @relation("JobCover", fields: [coverImageId], references: [id])
+  logo              FileObject?            @relation("JobLogo", fields: [logoId], references: [id])
   category          JobCategory            @relation(fields: [categoryId], references: [id])
   createdBy         User                   @relation("CreatedJobs", fields: [createdById], references: [id])
   applicationFields JobApplicationField[]
@@ -950,6 +955,8 @@ model FileObject {
   applicationDocuments      JobApplicationDocument[]
   candidateProfileDocuments CandidateProfileDocument[]
   jobResources              JobResource[]
+  jobCovers                 Job[]                      @relation("JobCover")
+  jobLogos                  Job[]                      @relation("JobLogo")
   payoutProofs              Payout[]                   @relation("PayoutProof")
   timesheetProofs           TimesheetEntry[]           @relation("TimesheetProof")
 

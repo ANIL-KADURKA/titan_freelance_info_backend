@@ -7,15 +7,24 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseFilters,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { Roles } from '../auth/roles.decorator.js';
 import { RolesGuard } from '../auth/roles.guard.js';
 import { UserRole } from '../auth/roles.enum.js';
+import type { UploadedDocument } from '../common/document-validation.service.js';
 import { CreateJobApplicationFieldDto } from './dto/create-job-application-field.dto.js';
 import { CreateJobCategoryDto } from './dto/create-job-category.dto.js';
 import { CreateJobEligibilityRuleDto } from './dto/create-job-eligibility-rule.dto.js';
@@ -133,6 +142,22 @@ export class JobsController {
   @ApiOperation({ summary: 'Fetch a job by id' })
   findJobById(@Param('id') id: string, @CurrentUser() user: { id?: string }) {
     return this.jobsService.findJobByIdForUser(id, user?.id);
+  }
+
+  @Post('images')
+  @Roles(UserRole.ADMIN, UserRole.RECRUITER)
+  @UseInterceptors(FileInterceptor('image'))
+  @ApiConsumes('multipart/form-data')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Upload a job cover image or logo; returns its id and view URL',
+  })
+  async uploadJobImage(
+    @CurrentUser() user: { id: string },
+    @UploadedFile() file?: UploadedDocument,
+  ) {
+    const data = await this.jobsService.uploadImage(file, user.id);
+    return { success: true, message: 'Image uploaded.', data };
   }
 
   @Post()

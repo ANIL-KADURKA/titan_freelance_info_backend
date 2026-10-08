@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   ApplicationFieldType,
+  type FileObject,
   JobStatus,
   PayCurrency,
   PayUnit,
@@ -14,6 +15,10 @@ import {
   WorkMode,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { AwsDocumentUploadService } from '../common/aws-document-upload.service.js';
+import type { UploadedDocument } from '../common/document-validation.service.js';
+import { assertPhoto, PHOTO_TYPES } from '../common/photo-rules.js';
+import { S3StorageService } from '../common/s3-storage.service.js';
 import { newProjectAnnouncement } from '../community/announcement-rules.js';
 import { communityPost } from '../notifications/notification-messages.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -31,6 +36,20 @@ import { CreateJobDto } from './dto/create-job.dto.js';
 import { UpdateJobDto } from './dto/update-job.dto.js';
 
 type JobSearchScope = 'admin' | 'public';
+
+/** Cover image and logo files, loaded with every job response. */
+const jobImages = { coverImage: true, logo: true } as const;
+
+type WithJobImages = {
+  coverImage?: FileObject | null;
+  logo?: FileObject | null;
+};
+
+/** Public jobs show on the landing page and job board, so they need both. */
+const statusesNeedingImages: JobStatus[] = [
+  JobStatus.PUBLISHED,
+  JobStatus.UPCOMING,
+];
 
 /** A new application deadline must be a valid moment in the future. */
 export function assertFutureDeadline(
@@ -58,7 +77,64 @@ export class JobsService {
     private readonly jobResourcesService: JobResourcesService,
     private readonly notifications: NotificationsService,
     private readonly preApplications: JobPreApplicationsService,
+    private readonly uploads: AwsDocumentUploadService,
+    private readonly storage: S3StorageService,
   ) {}
+
+  /** Uploads a job cover image or logo; the job form sends back its id. */
+  async uploadImage(file: UploadedDocument | undefined, userId: string) {
+    if (!file) {
+      throw new BadRequestException('Choose an image to upload.');
+    }
+    assertPhoto(file);
+    const stored = await this.uploads.uploadDocument(file, {
+      folder: 'job-images',
+      uploadedById: userId,
+    });
+    return { id: stored.id, url: await this.imageUrl(stored) };
+  }
+
+  private imageUrl(file: FileObject | null | undefined) {
+    if (!file || file.deletedAt) return Promise.resolve(null);
+    return this.storage.createViewUrl(file.bucket, file.objectKey, {
+      fileName: file.originalName,
+      contentType: file.mimeType,
+    });
+  }
+
+  /** Swaps the file rows (BigInt sizes don't serialise) for view URLs. */
+  private async withImageUrls<T extends WithJobImages>(job: T) {
+    const { coverImage, logo, ...rest } = job;
+    const [coverImageUrl, logoUrl] = await Promise.all([
+      this.imageUrl(coverImage),
+      this.imageUrl(logo),
+    ]);
+    return { ...rest, coverImageUrl, logoUrl };
+  }
+
+  /** Both ids must point at uploaded, live image files. */
+  private async assertJobImages(
+    coverImageId: string | null | undefined,
+    logoId: string | null | undefined,
+  ) {
+    if (!coverImageId || !logoId) {
+      throw new BadRequestException('Add a cover image and a logo.');
+    }
+    const files = await this.prisma.fileObject.findMany({
+      where: {
+        id: { in: [coverImageId, logoId] },
+        deletedAt: null,
+        mimeType: { in: PHOTO_TYPES },
+      },
+      select: { id: true },
+    });
+    const found = new Set(files.map((file) => file.id));
+    if (!found.has(coverImageId) || !found.has(logoId)) {
+      throw new BadRequestException(
+        'Upload the cover image and logo again, then save.',
+      );
+    }
+  }
 
   /**
    * Validates new application fields up front (keys unique in the payload
@@ -257,6 +333,7 @@ export class JobsService {
     const job = await this.prisma.job.findFirst({
       where: { id: jobId, deletedAt: null },
       include: {
+        ...jobImages,
         category: true,
         createdBy: {
           select: { id: true, email: true, firstName: true, lastName: true },
@@ -587,9 +664,10 @@ export class JobsService {
   }
 
   async findAllJobs() {
-    return this.prisma.job.findMany({
+    const jobs = await this.prisma.job.findMany({
       where: { deletedAt: null },
       include: {
+        ...jobImages,
         category: true,
         createdBy: {
           select: { id: true, email: true, firstName: true, lastName: true },
@@ -616,10 +694,11 @@ export class JobsService {
       },
       orderBy: [{ createdAt: 'desc' }],
     });
+    return Promise.all(jobs.map((job) => this.withImageUrls(job)));
   }
 
   async findJobById(id: string) {
-    return this.ensureJobExists(id);
+    return this.withImageUrls(await this.ensureJobExists(id));
   }
 
   async findJobByIdForUser(id: string, userId?: string) {
@@ -640,6 +719,7 @@ export class JobsService {
             }),
       },
       include: {
+        ...jobImages,
         category: true,
         createdBy: canViewAllJobs
           ? {
@@ -678,7 +758,7 @@ export class JobsService {
       throw new NotFoundException('Job not found');
     }
 
-    return job;
+    return this.withImageUrls(job);
   }
 
   private async userHasAnyRole(userId: string, roles: UserRole[]) {
@@ -711,6 +791,7 @@ export class JobsService {
         category: { isActive: true },
       },
       include: {
+        ...jobImages,
         category: true,
         applicationFields: {
           where: { deletedAt: null },
@@ -740,7 +821,7 @@ export class JobsService {
       throw new NotFoundException('Job not found');
     }
 
-    return job;
+    return this.withImageUrls(job);
   }
 
   private async logPublicJobLookupMiss(identifier: string) {
@@ -822,6 +903,7 @@ export class JobsService {
       this.prisma.job.findMany({
         where,
         include: {
+          ...jobImages,
           category: true,
           createdBy:
             scope === 'admin'
@@ -869,7 +951,7 @@ export class JobsService {
     ]);
 
     return {
-      data,
+      data: await Promise.all(data.map((job) => this.withImageUrls(job))),
       meta: {
         page,
         pageSize,
@@ -935,6 +1017,7 @@ export class JobsService {
     await this.ensureUserExists(createdById);
 
     assertFutureDeadline(dto.applicationDeadline);
+    await this.assertJobImages(dto.coverImageId, dto.logoId);
     const title = dto.title.trim();
     const slug = this.normalizeSlug(dto.slug ?? title, 'Job');
     await this.assertJobSlugAvailable(slug);
@@ -961,7 +1044,8 @@ export class JobsService {
         dto.additionalInfo === undefined
           ? Prisma.JsonNull
           : (dto.additionalInfo as Prisma.InputJsonValue),
-      coverImageId: dto.coverImageId ?? null,
+      coverImage: { connect: { id: dto.coverImageId } },
+      logo: { connect: { id: dto.logoId } },
       status: dto.status ?? JobStatus.DRAFT,
       publishedAt: dto.publishedAt ?? null,
       applicationDeadline: dto.applicationDeadline ?? null,
@@ -992,6 +1076,7 @@ export class JobsService {
               eligibilityRules: { create: eligibilityRules },
             },
             include: {
+              ...jobImages,
               category: true,
               createdBy: {
                 select: {
@@ -1030,7 +1115,7 @@ export class JobsService {
           }),
         );
       }
-      return created;
+      return await this.withImageUrls(created);
     } catch (error) {
       this.rethrowUniqueConstraint(
         error,
@@ -1084,6 +1169,21 @@ export class JobsService {
       dto.closedAt !== undefined ? dto.closedAt : existing.closedAt;
     const nextStatus = dto.status ?? existing.status;
 
+    // Images can be replaced but not removed. Older jobs without them can
+    // still be closed or drafted, but need both to be live.
+    if (dto.coverImageId === null || dto.logoId === null) {
+      throw new BadRequestException('A job needs a cover image and a logo.');
+    }
+    const nextCoverImageId = dto.coverImageId ?? existing.coverImageId;
+    const nextLogoId = dto.logoId ?? existing.logoId;
+    if (
+      dto.coverImageId !== undefined ||
+      dto.logoId !== undefined ||
+      statusesNeedingImages.includes(nextStatus)
+    ) {
+      await this.assertJobImages(nextCoverImageId, nextLogoId);
+    }
+
     const data: Prisma.JobUpdateInput = {
       title: nextTitle,
       slug: nextSlug,
@@ -1122,10 +1222,10 @@ export class JobsService {
         dto.additionalInfo === undefined
           ? (existing.additionalInfo ?? Prisma.JsonNull)
           : (dto.additionalInfo as Prisma.InputJsonValue),
-      coverImageId:
-        dto.coverImageId !== undefined
-          ? (dto.coverImageId ?? null)
-          : existing.coverImageId,
+      ...(dto.coverImageId
+        ? { coverImage: { connect: { id: dto.coverImageId } } }
+        : {}),
+      ...(dto.logoId ? { logo: { connect: { id: dto.logoId } } } : {}),
       status: nextStatus,
       publishedAt: nextPublishedAt,
       applicationDeadline:
@@ -1177,6 +1277,7 @@ export class JobsService {
             : {}),
         },
         include: {
+          ...jobImages,
           category: true,
           createdBy: {
             select: { id: true, email: true, firstName: true, lastName: true },
@@ -1190,7 +1291,7 @@ export class JobsService {
       ) {
         await this.preApplications.notifyOpened(updated);
       }
-      return updated;
+      return await this.withImageUrls(updated);
     } catch (error) {
       this.rethrowUniqueConstraint(
         error,

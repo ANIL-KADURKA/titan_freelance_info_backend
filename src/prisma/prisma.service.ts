@@ -14,6 +14,9 @@ type PrismaLoggingOptions = {
   ];
 } & Prisma.PrismaClientOptions;
 
+/** Queries at least this slow are still logged in production. */
+const SLOW_QUERY_MS = 500;
+
 @Injectable()
 export class PrismaService
   extends PrismaClient<PrismaLoggingOptions>
@@ -34,10 +37,19 @@ export class PrismaService
       transactionOptions: { timeout: 60_000, maxWait: 15_000 },
     });
 
+    // Every query in development; in production only slow ones, since
+    // logging each statement in full costs time and log volume.
+    const logAllQueries = process.env.NODE_ENV !== 'production';
     this.$on('query', (event) => {
-      this.logger.log(
-        `Query completed | duration=${event.duration}ms | target=${event.target} | sql=${event.query}`,
-      );
+      if (logAllQueries) {
+        this.logger.log(
+          `Query completed | duration=${event.duration}ms | target=${event.target} | sql=${event.query}`,
+        );
+      } else if (event.duration >= SLOW_QUERY_MS) {
+        this.logger.warn(
+          `Slow query | duration=${event.duration}ms | target=${event.target} | sql=${event.query}`,
+        );
+      }
     });
 
     this.$on('warn', (event) => {
