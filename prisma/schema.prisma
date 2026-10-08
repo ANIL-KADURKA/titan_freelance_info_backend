@@ -405,7 +405,10 @@ model Job {
   workInstructions        String[]     @default([]) @map("work_instructions")
   additionalInfo          Json?        @map("additional_info")
   /// Cover image and company logo: required to create, edit or publish a job
-  /// (enforced by the API; older rows may still be empty).
+  /// (enforced by the API). New uploads are Cloudinary URLs; the *Id columns
+  /// are older S3 uploads, used only when the URL is empty.
+  coverImageUrl           String?      @map("cover_image_url")
+  logoUrl                 String?      @map("logo_url")
   coverImageId            String?      @map("cover_image_id") @db.Uuid
   logoId                  String?      @map("logo_id") @db.Uuid
   status                  JobStatus    @default(DRAFT)

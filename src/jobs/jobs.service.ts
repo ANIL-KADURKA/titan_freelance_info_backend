@@ -15,9 +15,8 @@ import {
   WorkMode,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { AwsDocumentUploadService } from '../common/aws-document-upload.service.js';
+import { CloudinaryService } from '../common/cloudinary.service.js';
 import type { UploadedDocument } from '../common/document-validation.service.js';
-import { assertPhoto, PHOTO_TYPES } from '../common/photo-rules.js';
 import { S3StorageService } from '../common/s3-storage.service.js';
 import { newProjectAnnouncement } from '../community/announcement-rules.js';
 import { communityPost } from '../notifications/notification-messages.js';
@@ -37,10 +36,12 @@ import { UpdateJobDto } from './dto/update-job.dto.js';
 
 type JobSearchScope = 'admin' | 'public';
 
-/** Cover image and logo files, loaded with every job response. */
+/** Older S3 cover/logo files, loaded with every job as a fallback. */
 const jobImages = { coverImage: true, logo: true } as const;
 
 type WithJobImages = {
+  coverImageUrl?: string | null;
+  logoUrl?: string | null;
   coverImage?: FileObject | null;
   logo?: FileObject | null;
 };
@@ -77,24 +78,20 @@ export class JobsService {
     private readonly jobResourcesService: JobResourcesService,
     private readonly notifications: NotificationsService,
     private readonly preApplications: JobPreApplicationsService,
-    private readonly uploads: AwsDocumentUploadService,
+    private readonly cloudinary: CloudinaryService,
     private readonly storage: S3StorageService,
   ) {}
 
-  /** Uploads a job cover image or logo; the job form sends back its id. */
-  async uploadImage(file: UploadedDocument | undefined, userId: string) {
+  /** Uploads a job cover image or logo to Cloudinary; the form saves the URL. */
+  async uploadImage(file: UploadedDocument | undefined) {
     if (!file) {
       throw new BadRequestException('Choose an image to upload.');
     }
-    assertPhoto(file);
-    const stored = await this.uploads.uploadDocument(file, {
-      folder: 'job-images',
-      uploadedById: userId,
-    });
-    return { id: stored.id, url: await this.imageUrl(stored) };
+    return { url: await this.cloudinary.uploadImage(file, 'jobs') };
   }
 
-  private imageUrl(file: FileObject | null | undefined) {
+  /** View URL for an older S3 upload (jobs from before Cloudinary). */
+  private legacyImageUrl(file: FileObject | null | undefined) {
     if (!file || file.deletedAt) return Promise.resolve(null);
     return this.storage.createViewUrl(file.bucket, file.objectKey, {
       fileName: file.originalName,
@@ -102,37 +99,27 @@ export class JobsService {
     });
   }
 
-  /** Swaps the file rows (BigInt sizes don't serialise) for view URLs. */
+  /**
+   * Cloudinary URL when set, else the older S3 file's view URL. The file rows
+   * are dropped (their BigInt sizes don't serialise).
+   */
   private async withImageUrls<T extends WithJobImages>(job: T) {
     const { coverImage, logo, ...rest } = job;
     const [coverImageUrl, logoUrl] = await Promise.all([
-      this.imageUrl(coverImage),
-      this.imageUrl(logo),
+      job.coverImageUrl || this.legacyImageUrl(coverImage),
+      job.logoUrl || this.legacyImageUrl(logo),
     ]);
     return { ...rest, coverImageUrl, logoUrl };
   }
 
-  /** Both ids must point at uploaded, live image files. */
-  private async assertJobImages(
-    coverImageId: string | null | undefined,
-    logoId: string | null | undefined,
-  ) {
-    if (!coverImageId || !logoId) {
-      throw new BadRequestException('Add a cover image and a logo.');
-    }
-    const files = await this.prisma.fileObject.findMany({
-      where: {
-        id: { in: [coverImageId, logoId] },
-        deletedAt: null,
-        mimeType: { in: PHOTO_TYPES },
-      },
-      select: { id: true },
-    });
-    const found = new Set(files.map((file) => file.id));
-    if (!found.has(coverImageId) || !found.has(logoId)) {
-      throw new BadRequestException(
-        'Upload the cover image and logo again, then save.',
-      );
+  /** New image URLs must come from our Cloudinary uploads. */
+  private assertOwnImageUrls(...urls: Array<string | null | undefined>) {
+    for (const url of urls) {
+      if (url && !this.cloudinary.isOwnImageUrl(url)) {
+        throw new BadRequestException(
+          'Upload the cover image and logo again, then save.',
+        );
+      }
     }
   }
 
@@ -1017,7 +1004,10 @@ export class JobsService {
     await this.ensureUserExists(createdById);
 
     assertFutureDeadline(dto.applicationDeadline);
-    await this.assertJobImages(dto.coverImageId, dto.logoId);
+    if (!dto.coverImageUrl || !dto.logoUrl) {
+      throw new BadRequestException('Add a cover image and a logo.');
+    }
+    this.assertOwnImageUrls(dto.coverImageUrl, dto.logoUrl);
     const title = dto.title.trim();
     const slug = this.normalizeSlug(dto.slug ?? title, 'Job');
     await this.assertJobSlugAvailable(slug);
@@ -1044,8 +1034,8 @@ export class JobsService {
         dto.additionalInfo === undefined
           ? Prisma.JsonNull
           : (dto.additionalInfo as Prisma.InputJsonValue),
-      coverImage: { connect: { id: dto.coverImageId } },
-      logo: { connect: { id: dto.logoId } },
+      coverImageUrl: dto.coverImageUrl,
+      logoUrl: dto.logoUrl,
       status: dto.status ?? JobStatus.DRAFT,
       publishedAt: dto.publishedAt ?? null,
       applicationDeadline: dto.applicationDeadline ?? null,
@@ -1171,17 +1161,16 @@ export class JobsService {
 
     // Images can be replaced but not removed. Older jobs without them can
     // still be closed or drafted, but need both to be live.
-    if (dto.coverImageId === null || dto.logoId === null) {
+    if (dto.coverImageUrl === null || dto.logoUrl === null) {
       throw new BadRequestException('A job needs a cover image and a logo.');
     }
-    const nextCoverImageId = dto.coverImageId ?? existing.coverImageId;
-    const nextLogoId = dto.logoId ?? existing.logoId;
-    if (
-      dto.coverImageId !== undefined ||
-      dto.logoId !== undefined ||
-      statusesNeedingImages.includes(nextStatus)
-    ) {
-      await this.assertJobImages(nextCoverImageId, nextLogoId);
+    this.assertOwnImageUrls(dto.coverImageUrl, dto.logoUrl);
+    const hasCover = Boolean(
+      dto.coverImageUrl || existing.coverImageUrl || existing.coverImageId,
+    );
+    const hasLogo = Boolean(dto.logoUrl || existing.logoUrl || existing.logoId);
+    if (statusesNeedingImages.includes(nextStatus) && !(hasCover && hasLogo)) {
+      throw new BadRequestException('Add a cover image and a logo.');
     }
 
     const data: Prisma.JobUpdateInput = {
@@ -1222,10 +1211,8 @@ export class JobsService {
         dto.additionalInfo === undefined
           ? (existing.additionalInfo ?? Prisma.JsonNull)
           : (dto.additionalInfo as Prisma.InputJsonValue),
-      ...(dto.coverImageId
-        ? { coverImage: { connect: { id: dto.coverImageId } } }
-        : {}),
-      ...(dto.logoId ? { logo: { connect: { id: dto.logoId } } } : {}),
+      ...(dto.coverImageUrl ? { coverImageUrl: dto.coverImageUrl } : {}),
+      ...(dto.logoUrl ? { logoUrl: dto.logoUrl } : {}),
       status: nextStatus,
       publishedAt: nextPublishedAt,
       applicationDeadline:

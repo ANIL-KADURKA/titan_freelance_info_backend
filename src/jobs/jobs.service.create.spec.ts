@@ -1,14 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateJobDto } from './dto/create-job.dto.js';
+import type { CloudinaryService } from '../common/cloudinary.service.js';
+import type { S3StorageService } from '../common/s3-storage.service.js';
+import type { JobPreApplicationsService } from './job-pre-applications.service.js';
 import type { JobResourcesService } from './job-resources.service.js';
 import type { NotificationsService } from '../notifications/notifications.service.js';
 import { assertFutureDeadline, JobsService } from './jobs.service.js';
 
 const categoryId = '22222222-2222-4222-8222-222222222222';
 const userId = '33333333-3333-4333-8333-333333333333';
-const coverImageId = '44444444-4444-4444-8444-444444444444';
-const logoId = '55555555-5555-4555-8555-555555555555';
+const cloud = 'https://res.cloudinary.com/titan/image/upload/f_auto,q_auto';
+const coverImageUrl = `${cloud}/titan/jobs/cover.jpg`;
+const logoUrl = `${cloud}/titan/jobs/logo.png`;
 
 function createService({ failInTransaction = false } = {}) {
   // Echo the row back; image relations come back as file rows (none here).
@@ -31,11 +35,6 @@ function createService({ failInTransaction = false } = {}) {
       findUnique: vi.fn().mockResolvedValue({ id: categoryId, isActive: true }),
     },
     user: { findUnique: vi.fn().mockResolvedValue({ id: userId }) },
-    fileObject: {
-      findMany: vi
-        .fn()
-        .mockResolvedValue([{ id: coverImageId }, { id: logoId }]),
-    },
     $transaction,
   } as unknown as PrismaService;
   const prepareDraftResources = vi.fn().mockResolvedValue([
@@ -57,11 +56,19 @@ function createService({ failInTransaction = false } = {}) {
     persistPreparedResources,
     discardDraftUploads,
   } as unknown as JobResourcesService;
+  // Our Cloudinary account is "titan" in these tests.
+  const cloudinary = {
+    isOwnImageUrl: (url: string) =>
+      url.startsWith('https://res.cloudinary.com/titan/image/upload/'),
+  } as unknown as CloudinaryService;
   return {
     service: new JobsService(
       prisma,
       resources,
       notifications as unknown as NotificationsService,
+      {} as JobPreApplicationsService,
+      cloudinary,
+      {} as S3StorageService,
     ),
     notifyCandidates,
     jobCreate,
@@ -76,8 +83,8 @@ const dto = (overrides: Partial<CreateJobDto> = {}): CreateJobDto => ({
   title: 'Hindi AI Trainer',
   description: 'Train an assistant in Hindi.',
   categoryId,
-  coverImageId,
-  logoId,
+  coverImageUrl,
+  logoUrl,
   eligibilityRules: [
     { fieldKey: 'age', fieldType: 'NUMBER', operator: 'GTE', value: 18 },
   ],
@@ -111,8 +118,8 @@ describe('JobsService.createJob (transactional)', () => {
           eligibilityRules: {
             create: [expect.objectContaining({ fieldKey: 'age' })],
           },
-          coverImage: { connect: { id: coverImageId } },
-          logo: { connect: { id: logoId } },
+          coverImageUrl,
+          logoUrl,
         }),
       }),
     );
@@ -164,18 +171,20 @@ describe('JobsService.createJob (transactional)', () => {
     const { service, $transaction } = createService();
     await expect(
       service.createJob(
-        dto({ logoId: undefined as unknown as string }),
+        dto({ logoUrl: undefined as unknown as string }),
         userId,
       ),
     ).rejects.toThrow('Add a cover image and a logo.');
     expect($transaction).not.toHaveBeenCalled();
   });
 
-  it('rejects image ids that are not uploaded images', async () => {
+  it('rejects image URLs that are not our Cloudinary uploads', async () => {
     const { service, $transaction } = createService();
-    const other = '66666666-6666-4666-8666-666666666666';
     await expect(
-      service.createJob(dto({ logoId: other }), userId),
+      service.createJob(
+        dto({ logoUrl: 'https://example.com/logo.png' }),
+        userId,
+      ),
     ).rejects.toThrow('Upload the cover image and logo again');
     expect($transaction).not.toHaveBeenCalled();
   });

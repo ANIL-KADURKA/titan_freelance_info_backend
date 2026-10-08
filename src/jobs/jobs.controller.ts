@@ -150,13 +150,10 @@ export class JobsController {
   @ApiConsumes('multipart/form-data')
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Upload a job cover image or logo; returns its id and view URL',
+    summary: 'Upload a job cover image or logo to Cloudinary; returns its URL',
   })
-  async uploadJobImage(
-    @CurrentUser() user: { id: string },
-    @UploadedFile() file?: UploadedDocument,
-  ) {
-    const data = await this.jobsService.uploadImage(file, user.id);
+  async uploadJobImage(@UploadedFile() file?: UploadedDocument) {
+    const data = await this.jobsService.uploadImage(file);
     return { success: true, message: 'Image uploaded.', data };
   }
 

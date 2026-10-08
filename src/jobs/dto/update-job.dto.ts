@@ -11,6 +11,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
   ValidateIf,
   ValidateNested,
@@ -152,20 +153,20 @@ export class UpdateJobDto {
   additionalInfo?: Record<string, unknown>;
 
   @ApiPropertyOptional({
-    example: '9f1d37d1-7d7b-4842-b7a8-824db7e49ef6',
-    description: 'Replacement cover image file id, from POST /jobs/images',
+    description: 'Replacement cover image URL, from POST /jobs/images',
   })
   @IsOptional()
-  @IsUUID()
-  coverImageId?: string;
+  @IsString()
+  @MaxLength(1000)
+  coverImageUrl?: string;
 
   @ApiPropertyOptional({
-    example: '0b8e4f62-2f4c-4a8e-9d55-6c1f0e6a7b21',
-    description: 'Replacement company logo file id, from POST /jobs/images',
+    description: 'Replacement company logo URL, from POST /jobs/images',
   })
   @IsOptional()
-  @IsUUID()
-  logoId?: string;
+  @IsString()
+  @MaxLength(1000)
+  logoUrl?: string;
 
   @ApiPropertyOptional({ enum: JobStatus, description: 'Job status' })
   @IsOptional()

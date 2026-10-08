@@ -60,13 +60,11 @@ export class WebsiteContentController {
   @UseInterceptors(FileInterceptor('image'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
-    summary: 'Upload a website image; save its id in the screen content',
+    summary:
+      'Upload a website image to Cloudinary; save its URL in the content',
   })
-  uploadImage(
-    @UploadedFile() file: UploadedDocument | undefined,
-    @CurrentUser() user: { id?: string },
-  ) {
-    return this.websiteContentService.uploadImage(file, user?.id);
+  uploadImage(@UploadedFile() file: UploadedDocument | undefined) {
+    return this.websiteContentService.uploadImage(file);
   }
 
   @Post()

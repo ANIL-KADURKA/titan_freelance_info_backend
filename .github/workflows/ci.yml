@@ -19,15 +19,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Versions come from the repo, so CI matches local and deploy builds:
+      # pnpm from package.json "packageManager", Node from .nvmrc.
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 11.12.0
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 25
+          node-version-file: .nvmrc
           cache: pnpm
 
       - name: Install dependencies
