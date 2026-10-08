@@ -6,16 +6,13 @@ import {
 } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 
+// Only failures are logged: no per-query or connection chatter.
 type PrismaLoggingOptions = {
-  log: [
-    { emit: 'event'; level: 'query' },
-    { emit: 'event'; level: 'warn' },
-    { emit: 'event'; level: 'error' },
-  ];
+  log: [{ emit: 'event'; level: 'error' }];
 } & Prisma.PrismaClientOptions;
 
-/** Queries at least this slow are still logged in production. */
-const SLOW_QUERY_MS = 500;
+const describe = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
 
 @Injectable()
 export class PrismaService
@@ -26,49 +23,22 @@ export class PrismaService
 
   constructor() {
     super({
-      log: [
-        { emit: 'event', level: 'query' },
-        { emit: 'event', level: 'warn' },
-        { emit: 'event', level: 'error' },
-      ],
-      // Interactive transactions run many round trips to the hosted database
-      // (~200 ms each), so Prisma's 5 s default is too tight. Allow 1 minute,
-      // and up to 15 s to get a connection from the pool.
-      transactionOptions: { timeout: 60_000, maxWait: 15_000 },
-    });
-
-    // Every query in development; in production only slow ones, since
-    // logging each statement in full costs time and log volume.
-    const logAllQueries = process.env.NODE_ENV !== 'production';
-    this.$on('query', (event) => {
-      if (logAllQueries) {
-        this.logger.log(
-          `Query completed | duration=${event.duration}ms | target=${event.target} | sql=${event.query}`,
-        );
-      } else if (event.duration >= SLOW_QUERY_MS) {
-        this.logger.warn(
-          `Slow query | duration=${event.duration}ms | target=${event.target} | sql=${event.query}`,
-        );
-      }
-    });
-
-    this.$on('warn', (event) => {
-      this.logger.warn(event.message);
+      log: [{ emit: 'event', level: 'error' }],
     });
 
     this.$on('error', (event) => {
-      this.logger.error(event.message);
+      this.logger.error(
+        `Database error | target=${event.target} | ${event.message}`,
+      );
     });
   }
 
   async onModuleInit() {
-    this.logger.log('Connecting to database');
     try {
       await this.$connect();
-      this.logger.log('Database connection established');
     } catch (error) {
       this.logger.error(
-        `Database connection failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Database connection failed: ${describe(error)}`,
         error instanceof Error ? error.stack : undefined,
       );
       throw error;
@@ -76,13 +46,11 @@ export class PrismaService
   }
 
   async onModuleDestroy() {
-    this.logger.log('Disconnecting from database');
     try {
       await this.$disconnect();
-      this.logger.log('Database connection closed');
     } catch (error) {
       this.logger.error(
-        `Database disconnect failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Database disconnect failed: ${describe(error)}`,
         error instanceof Error ? error.stack : undefined,
       );
       throw error;
